@@ -76,6 +76,10 @@ class Settings(BaseSettings):
     # Tier limits
     free_tier_keyword_limit: int = 5
 
+    @property
+    def firecrawl_configured(self) -> bool:
+        return bool(self.firecrawl_api_key.strip())
+
 
 @lru_cache
 def get_settings() -> Settings:

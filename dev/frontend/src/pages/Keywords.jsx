@@ -1,7 +1,7 @@
 // Keyword management: boolean expressions, synonyms, primary/secondary
 // category, per-keyword portal selection and active toggles.
 import { useEffect, useState } from 'react'
-import { Pencil, Plus, Tags, Trash2 } from 'lucide-react'
+import { Pencil, Plus, RefreshCw, Tags, Trash2 } from 'lucide-react'
 import { api } from '../api/client'
 import {
   Badge, Button, Card, CardHeader, EmptyState, Input, Label, Modal, Select,
@@ -22,6 +22,7 @@ export default function Keywords() {
   const [modal, setModal] = useState(null) // null | {mode:'create'} | {mode:'edit', id}
   const [form, setForm] = useState(EMPTY_FORM)
   const [busy, setBusy] = useState(false)
+  const [rescanning, setRescanning] = useState(false)
 
   const load = () => api.get('/keywords').then(setKeywords).catch((e) => toast(e.message, 'error'))
   useEffect(() => {
@@ -50,10 +51,10 @@ export default function Keywords() {
     try {
       if (modal.mode === 'create') {
         await api.post('/keywords', payload)
-        toast('Keyword added — it will match on the next sync')
+        toast('Keyword added — matching it against collected tenders now…')
       } else {
         await api.put(`/keywords/${modal.id}`, payload)
-        toast('Keyword updated')
+        toast('Keyword updated — re-matching against collected tenders…')
       }
       setModal(null)
       load()
@@ -88,6 +89,18 @@ export default function Keywords() {
     }
   }
 
+  const rescan = async () => {
+    setRescanning(true)
+    try {
+      const r = await api.post('/keywords/rescan')
+      toast(`Rescan complete — ${r.matched} match(es) across ${r.tenders_scanned} tenders`)
+    } catch (err) {
+      toast(err.message, 'error')
+    } finally {
+      setRescanning(false)
+    }
+  }
+
   const togglePortal = (code) =>
     setForm((f) => ({
       ...f,
@@ -107,7 +120,14 @@ export default function Keywords() {
             <code className="rounded bg-slate-200 px-1">NOT</code> — e.g. <i>drone AND surveillance NOT toy</i>
           </p>
         </div>
-        <Button onClick={openCreate}><Plus className="h-4 w-4" /> Add keyword</Button>
+        <div className="flex items-center gap-2">
+          <Button variant="secondary" onClick={rescan} disabled={rescanning}
+            title="Re-match your keywords against every tender already collected — no scraping, instant.">
+            <RefreshCw className={`h-4 w-4 ${rescanning ? 'animate-spin' : ''}`} />
+            {rescanning ? 'Rescanning…' : 'Rescan now'}
+          </Button>
+          <Button onClick={openCreate}><Plus className="h-4 w-4" /> Add keyword</Button>
+        </div>
       </div>
 
       {freeLimit && (

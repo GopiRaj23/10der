@@ -244,6 +244,107 @@ def compute_matches_for_tenders(db: Session, tender_ids: list[int]) -> tuple[int
     return created, alerts
 
 
+def rematch_for_user(db: Session, user_id: int,
+                     only_keyword_id: int | None = None) -> dict:
+    """Re-score a user's active keywords against ALL current (non-archived)
+    tenders already in the database — no scraping required.
+
+    This is what powers the "Rescan keywords" action: when a user adds or edits
+    a keyword they get matches against already-collected tenders immediately,
+    instead of waiting for the next scheduled scrape. Stale matches (from an
+    edited keyword that no longer matches a tender) are removed; matches for
+    inactive keywords are cleared. Instant alerts are NOT fired here — this is a
+    backfill over historical data, not a live discovery.
+
+    Returns {"matched", "tenders_scanned", "keywords"}.
+    """
+    user = db.get(User, user_id)
+    if not user or not user.is_active:
+        return {"matched": 0, "tenders_scanned": 0, "keywords": 0}
+
+    portal_map = {p.id: p for p in db.scalars(select(PortalSource)).all()}
+    tenders = db.scalars(
+        select(Tender).where(Tender.is_archived.is_(False))
+    ).all()
+
+    kw_stmt = select(Keyword).where(
+        Keyword.user_id == user_id, Keyword.is_active.is_(True)
+    )
+    if only_keyword_id is not None:
+        kw_stmt = kw_stmt.where(Keyword.id == only_keyword_id)
+    keywords = db.scalars(kw_stmt).all()
+
+    # Clean up matches belonging to this user's inactive keywords so toggling a
+    # keyword off removes it from results (skipped for a single-keyword rescan).
+    if only_keyword_id is None:
+        inactive_ids = db.scalars(
+            select(Keyword.id).where(
+                Keyword.user_id == user_id, Keyword.is_active.is_(False)
+            )
+        ).all()
+        if inactive_ids:
+            for m in db.scalars(
+                select(TenderKeywordMatch).where(
+                    TenderKeywordMatch.user_id == user_id,
+                    TenderKeywordMatch.keyword_id.in_(inactive_ids),
+                )
+            ).all():
+                db.delete(m)
+
+    total_matches = 0
+    for kw in keywords:
+        new_scores: dict[int, tuple[float, dict]] = {}
+        for tender in tenders:
+            portal = portal_map.get(tender.portal_source_id)
+            if portal is None:
+                continue
+            if user.tier == "free" and portal.tier_required != "free":
+                continue
+            if kw.portals_json and portal.code not in kw.portals_json:
+                continue
+            score, details = matching.score_tender(
+                keyword_text=kw.keyword_text,
+                synonyms=kw.synonyms_json or [],
+                title=tender.title,
+                description=tender.description_text,
+                organisation=tender.organisation,
+                department=tender.department,
+                tender_state=tender.state,
+                user_state=user.state,
+                user_industry=user.industry,
+            )
+            if not details["matched_fields"] or not (
+                {"title", "description", "organisation"} & set(details["matched_fields"])
+            ):
+                continue
+            new_scores[tender.id] = (score, details)
+
+        existing = {
+            m.tender_id: m for m in db.scalars(
+                select(TenderKeywordMatch).where(TenderKeywordMatch.keyword_id == kw.id)
+            ).all()
+        }
+        for tid, match in existing.items():
+            if tid not in new_scores:
+                db.delete(match)  # keyword was edited — no longer matches
+        for tid, (score, details) in new_scores.items():
+            if tid in existing:
+                existing[tid].relevance_score = score
+                existing[tid].match_details_json = details
+            else:
+                db.add(TenderKeywordMatch(
+                    tender_id=tid, keyword_id=kw.id, user_id=user_id,
+                    relevance_score=score, match_details_json=details,
+                ))
+        total_matches += len(new_scores)
+
+    db.commit()
+    logger.info("Rematch for user %s: %d matches across %d tenders, %d keywords",
+                user_id, total_matches, len(tenders), len(keywords))
+    return {"matched": total_matches, "tenders_scanned": len(tenders),
+            "keywords": len(keywords)}
+
+
 def _send_instant_alert(db: Session, user: User, tender: Tender,
                         keyword: Keyword, score: float) -> bool:
     portal = db.get(PortalSource, tender.portal_source_id)

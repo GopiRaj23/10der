@@ -109,8 +109,11 @@ def _archive_old() -> None:
 
 def create_scheduler(blocking: bool = False):
     sched = BlockingScheduler(timezone="UTC") if blocking else BackgroundScheduler(timezone="UTC")
+    # Kick the first scrape ~30s after start in BOTH modes. (Passing
+    # next_run_time=None to APScheduler adds the job *paused* — it would never
+    # run — so the dedicated scheduler container must get a real first-run time.)
     sched.add_job(_scrape_due_portals, "interval", hours=1, id="scrape",
-                  next_run_time=None if blocking else utcnow() + timedelta(seconds=30),
+                  next_run_time=utcnow() + timedelta(seconds=30),
                   max_instances=1, coalesce=True)
     sched.add_job(_send_digests, "cron", minute=5, id="digests",
                   max_instances=1, coalesce=True)

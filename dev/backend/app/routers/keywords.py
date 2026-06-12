@@ -1,14 +1,31 @@
-from fastapi import APIRouter, Depends, HTTPException, status
+import logging
+
+from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, status
 from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
 from ..auth import get_current_user
 from ..config import settings
-from ..database import get_db
+from ..database import SessionLocal, get_db
 from ..models import Keyword, KeywordBlacklist, PortalSource, User
 from ..schemas import KeywordIn, KeywordOut
 
+logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/keywords", tags=["keywords"])
+
+
+def _rematch_background(user_id: int, keyword_id: int | None = None) -> None:
+    """Re-score keyword(s) against already-collected tenders in its own session
+    so newly added/edited keywords surface matches without a fresh scrape."""
+    from ..services import scrape_service
+
+    db = SessionLocal()
+    try:
+        scrape_service.rematch_for_user(db, user_id, only_keyword_id=keyword_id)
+    except Exception:
+        logger.exception("Background rematch failed for user %s", user_id)
+    finally:
+        db.close()
 
 
 def _check_blacklist(db: Session, payload: KeywordIn) -> None:
@@ -46,7 +63,8 @@ def list_keywords(user: User = Depends(get_current_user), db: Session = Depends(
 
 
 @router.post("", response_model=KeywordOut, status_code=status.HTTP_201_CREATED)
-def create_keyword(payload: KeywordIn, user: User = Depends(get_current_user),
+def create_keyword(payload: KeywordIn, background: BackgroundTasks,
+                   user: User = Depends(get_current_user),
                    db: Session = Depends(get_db)):
     count = db.scalar(select(func.count(Keyword.id)).where(Keyword.user_id == user.id))
     if user.tier == "free" and count >= settings.free_tier_keyword_limit:
@@ -70,11 +88,14 @@ def create_keyword(payload: KeywordIn, user: User = Depends(get_current_user),
     db.add(keyword)
     db.commit()
     db.refresh(keyword)
+    # Surface matches against already-collected tenders without a fresh scrape.
+    if keyword.is_active:
+        background.add_task(_rematch_background, user.id, keyword.id)
     return keyword
 
 
 @router.put("/{keyword_id}", response_model=KeywordOut)
-def update_keyword(keyword_id: int, payload: KeywordIn,
+def update_keyword(keyword_id: int, payload: KeywordIn, background: BackgroundTasks,
                    user: User = Depends(get_current_user), db: Session = Depends(get_db)):
     keyword = db.get(Keyword, keyword_id)
     if not keyword or keyword.user_id != user.id:
@@ -89,7 +110,25 @@ def update_keyword(keyword_id: int, payload: KeywordIn,
     keyword.is_active = payload.is_active
     db.commit()
     db.refresh(keyword)
+    # Re-apply the edited keyword (and clear it if it was just deactivated).
+    background.add_task(_rematch_background, user.id,
+                        keyword.id if keyword.is_active else None)
     return keyword
+
+
+@router.post("/rescan", status_code=status.HTTP_200_OK)
+def rescan_keywords(user: User = Depends(get_current_user), db: Session = Depends(get_db)):
+    """Re-score ALL of the user's active keywords against every tender already
+    collected — instant, no scraping. Use after adding/editing keywords to pull
+    matches from historical data."""
+    from ..services import scrape_service
+
+    result = scrape_service.rematch_for_user(db, user.id)
+    return {
+        "message": f"Rescanned {result['tenders_scanned']} tenders against "
+                   f"{result['keywords']} active keyword(s).",
+        **result,
+    }
 
 
 @router.delete("/{keyword_id}", status_code=status.HTTP_204_NO_CONTENT)

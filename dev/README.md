@@ -37,8 +37,13 @@ docker compose up --build
 # → app on http://localhost  (API docs: http://localhost/api/docs)
 ```
 
-The backend container automatically runs Alembic migrations, seeds the 19 portals +
-demo users, and performs an initial scrape (sample data when `DEMO_MODE=true`).
+The backend container runs Alembic migrations + seeds the 19 portals and demo users;
+the **scheduler** service then performs the first scrape ~30s after start and hourly after.
+With the default `DEMO_MODE=false` it scrapes **real** tenders (see below); set
+`DEMO_MODE=true` to populate realistic **sample** data instead.
+
+> 💡 A coloured banner at the top of the app always tells you which mode you're in, so
+> demo data is never mistaken for real listings.
 
 ## Quick start (manual, no Docker)
 
@@ -70,21 +75,43 @@ npm run dev                                 # http://localhost:5173 (proxies /ap
 
 > Change `ADMIN_EMAIL` / `ADMIN_PASSWORD` in `.env` before deploying anywhere real.
 
-## Demo mode vs live scraping
+## Live data vs demo mode
 
-`DEMO_MODE=true` (default) makes every scraper emit realistic sample tenders, so the entire
-product — matching, scoring, alerts, reports, dashboards, admin — is evaluable offline with
-zero external dependencies.
+**`DEMO_MODE=false` (default) scrapes REAL tenders** from the live portals. Two requirements:
 
-For **live scraping** set:
+1. **Network reach** — the machine running the scraper must be able to reach the portals
+   (`eprocure.gov.in`, `bidplus.gem.gov.in`, …). Run it on your own machine/server, **not** a
+   locked-down CI/cloud box whose egress allowlist blocks those hosts (you'd get `403
+   Host not in allowlist`).
+2. **A Firecrawl key (strongly recommended)** — set `FIRECRAWL_API_KEY=fc-...` (free tier at
+   <https://firecrawl.dev>). It renders JS portals (GeM), defeats anti-bot pages and makes NIC
+   portals far more reliable. Without it only the NIC/GePNIC portals are scrapable via plain
+   HTTP, and even those may be blocked by the portal's bot protection.
 
-```env
-DEMO_MODE=false
-FIRECRAWL_API_KEY=fc-...
+**Verify live access before trusting the app** — this calls the real scraper and prints what it
+finds (bypasses `DEMO_MODE`):
+
+```bash
+cd dev/backend
+python -m app.scrapers.test_live              # list testable portals
+python -m app.scrapers.test_live cppp gem tn  # hit specific portals
 ```
 
-and optionally install Playwright browsers for GeM/IREPS: `playwright install chromium`
-(uncomment the line in `backend/Dockerfile` for containers).
+`DEMO_MODE=true` flips every scraper to realistic **sample** data so the whole product —
+matching, scoring, alerts, reports, dashboards, admin — is evaluable offline with zero external
+dependencies. These are clearly labelled "DEMO DATA" in the UI and **will not appear on the
+official portals**.
+
+Playwright is the fallback renderer for GeM/IREPS when Firecrawl is absent:
+`playwright install chromium` (uncomment the line in `backend/Dockerfile` for containers).
+
+### Re-matching keywords against already-collected tenders
+
+Adding or editing a keyword automatically re-scores it against every tender already in the
+database (no scrape needed), so matches surface immediately. You can also force a full
+re-match from the **Keywords → "Rescan now"** button (or `POST /keywords/rescan`). To fetch
+*fresh* tenders on demand, use **`POST /scrape/trigger`** (per-portal) — the scheduler also
+runs scrapes automatically on each portal's interval.
 
 ## Portal coverage
 
@@ -166,7 +193,8 @@ alembic revision --autogenerate -m "add column"        # after editing models.py
 
 `POST /auth/{register,login,refresh,forgot-password,reset-password,verify-email}` ·
 `GET/PUT /users/me` · `GET /users/me/notifications` ·
-`GET/POST/PUT/DELETE /keywords` ·
+`GET/POST/PUT/DELETE /keywords` · `POST /keywords/rescan` (re-match vs collected tenders) ·
+`GET /config` (public: demo/live + firecrawl flags) ·
 `GET /tenders` (filters: keyword, portal, state, category, closing window, value range,
 score, status, sort, pagination) · `GET /tenders/bookmarks` · `GET /tenders/{id}` ·
 `POST /tenders/{id}/status` · `GET /tenders/{id}/related` · `GET /tenders/{id}/summary` ·

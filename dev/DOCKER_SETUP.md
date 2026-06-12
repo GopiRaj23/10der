@@ -99,11 +99,27 @@ docker compose up
 ## Environment Variables
 
 The `.env` file controls:
-- **DEMO_MODE=true** → Use sample data (no real portal scraping)
+- **DEMO_MODE=false** (default) → scrape **real** tenders from the live portals. Needs your
+  machine to reach those portals and (recommended) a Firecrawl key. Set **DEMO_MODE=true** to
+  use clearly-labelled **sample** data instead (great for a first look, offline, no keys).
+- **FIRECRAWL_API_KEY** → strongly recommended for real data: unlocks GeM + JS-heavy portals
+  and makes NIC portals reliable. Free tier at https://firecrawl.dev
 - **DATABASE_URL** → PostgreSQL connection (overridden in compose for Docker)
 - **FRONTEND_ORIGIN=http://localhost** → CORS origin for API
 
 See `.env.example` for all available options.
+
+### Verifying real data
+
+The app shows a coloured banner telling you whether it's serving demo or live data. To test a
+portal's live scraper directly (bypasses DEMO_MODE):
+
+```bash
+docker compose exec backend python -m app.scrapers.test_live cppp gem
+```
+
+> Note: live scraping won't work from a network that can't reach the portals. If you see
+> `403 Host not in allowlist`, your environment is blocking outbound access to the portal.
 
 ## Stopping Services
 ```bash

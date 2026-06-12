@@ -98,3 +98,15 @@ app.include_router(admin.router)
 @app.get("/health", tags=["system"])
 def health():
     return {"status": "ok", "app": settings.app_name, "demo_mode": settings.demo_mode}
+
+
+@app.get("/config", tags=["system"])
+def public_config():
+    """Public runtime flags the SPA uses to render the data-source banner."""
+    return {
+        "app": settings.app_name,
+        "environment": settings.environment,
+        "demo_mode": settings.demo_mode,
+        "firecrawl_configured": settings.firecrawl_configured,
+        "live_scraping": not settings.demo_mode,
+    }

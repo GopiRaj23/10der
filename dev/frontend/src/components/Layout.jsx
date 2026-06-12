@@ -3,7 +3,7 @@
 import { useEffect, useState } from 'react'
 import { NavLink, Outlet, useNavigate } from 'react-router-dom'
 import {
-  Bell, Briefcase, FileText, LayoutDashboard, LogOut, Menu,
+  Bell, Briefcase, FileText, FlaskConical, LayoutDashboard, LogOut, Menu,
   Search, Settings, ShieldCheck, Tags, X,
 } from 'lucide-react'
 import { api, fmtDateTime } from '../api/client'
@@ -26,12 +26,14 @@ export default function Layout() {
   const navigate = useNavigate()
   const [sidebarOpen, setSidebarOpen] = useState(false)
   const [stats, setStats] = useState(null)
+  const [config, setConfig] = useState(null)
   const [disclaimerDismissed, setDisclaimerDismissed] = useState(
     () => sessionStorage.getItem('tr_disclaimer') === '1',
   )
 
   useEffect(() => {
     api.get('/dashboard/stats').then(setStats).catch(() => {})
+    api.get('/config', undefined, { auth: false }).then(setConfig).catch(() => {})
   }, [])
 
   const initial = (user?.company_name || user?.email || '?').charAt(0).toUpperCase()
@@ -137,6 +139,29 @@ export default function Layout() {
             </button>
           </div>
         </header>
+
+        {/* Data-source banner — demo data must never be mistaken for real */}
+        {config?.demo_mode && (
+          <div className="flex items-center gap-2 bg-orange-100 px-4 py-2 text-[11px] font-medium text-orange-900 lg:px-6">
+            <FlaskConical className="h-4 w-4 shrink-0" />
+            <span>
+              <b>DEMO DATA</b> — these are realistic <b>sample</b> tenders, not live listings,
+              so they won't appear on the official portals. To pull real tenders, set
+              <code className="mx-1 rounded bg-orange-200 px-1">DEMO_MODE=false</code> (and add a
+              Firecrawl API key) in your <code className="rounded bg-orange-200 px-1">.env</code>, then restart.
+            </span>
+          </div>
+        )}
+        {config && !config.demo_mode && !config.firecrawl_configured && (
+          <div className="flex items-center gap-2 bg-sky-50 px-4 py-2 text-[11px] text-sky-800 lg:px-6">
+            <FlaskConical className="h-4 w-4 shrink-0" />
+            <span>
+              <b>Live mode</b> (free scraping). NIC portals (CPPP, eTenders, TN, AP, MH, UP, DL, KL) are
+              active; <b>GeM and custom-platform portals need a Firecrawl key</b> — add
+              <code className="mx-1 rounded bg-sky-100 px-1">FIRECRAWL_API_KEY</code> for full coverage.
+            </span>
+          </div>
+        )}
 
         {/* Disclaimer banner */}
         {!disclaimerDismissed && (
