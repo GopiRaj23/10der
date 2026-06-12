@@ -1,0 +1,9 @@
+# Root-level safety net (full rules live in dev/.gitignore)
+__pycache__/
+node_modules/
+.vite/
+dist/
+.venv/
+.env
+*.log
+.DS_Store
