@@ -1,0 +1,79 @@
+# TenderRadar — full stack
+#   nginx (:80)  ->  frontend (React/nginx)  +  backend (FastAPI)
+#   scheduler    ->  APScheduler worker (scraping, digests, reports, archiver)
+#   db           ->  PostgreSQL 16 (full-text search)
+#   redis        ->  Redis 7 (Firecrawl cache, scrape locks)
+#
+# Usage:  cp .env.example .env   &&   docker compose up --build
+services:
+  db:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-tenderradar}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-tenderradar}
+      POSTGRES_DB: ${POSTGRES_DB:-tenderradar}
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-tenderradar}"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  redis:
+    image: redis:7-alpine
+    command: redis-server --maxmemory 256mb --maxmemory-policy allkeys-lru
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
+  backend:
+    build: ./backend
+    env_file: .env
+    environment:
+      DATABASE_URL: postgresql+psycopg2://${POSTGRES_USER:-tenderradar}:${POSTGRES_PASSWORD:-tenderradar}@db:5432/${POSTGRES_DB:-tenderradar}
+      REDIS_URL: redis://redis:6379/0
+      SCHEDULER_ENABLED: "false"   # the dedicated scheduler service owns jobs
+    volumes:
+      - storage:/app/storage
+    depends_on:
+      db:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    command: >
+      sh -c "alembic upgrade head &&
+             python -m app.seed --scrape &&
+             uvicorn app.main:app --host 0.0.0.0 --port 8000"
+
+  scheduler:
+    build: ./backend
+    env_file: .env
+    environment:
+      DATABASE_URL: postgresql+psycopg2://${POSTGRES_USER:-tenderradar}:${POSTGRES_PASSWORD:-tenderradar}@db:5432/${POSTGRES_DB:-tenderradar}
+      REDIS_URL: redis://redis:6379/0
+    volumes:
+      - storage:/app/storage
+    depends_on:
+      backend:
+        condition: service_started
+    command: python -m app.scheduler
+
+  frontend:
+    build: ./frontend
+
+  nginx:
+    image: nginx:1.27-alpine
+    ports:
+      - "80:80"
+    volumes:
+      - ./nginx/nginx.conf:/etc/nginx/conf.d/default.conf:ro
+    depends_on:
+      - backend
+      - frontend
+
+volumes:
+  pgdata:
+  storage:

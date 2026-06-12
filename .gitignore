@@ -1,0 +1,29 @@
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.venv/
+venv/
+
+# Node
+node_modules/
+dist/
+.vite/
+
+# Environment & secrets
+.env
+.env.local
+
+# Runtime artifacts
+backend/storage/reports/*
+backend/storage/raw/*
+!backend/storage/reports/.gitkeep
+!backend/storage/raw/.gitkeep
+*.db
+*.sqlite3
+*.log
+
+# OS / editor
+.DS_Store
+.idea/
+.vscode/
