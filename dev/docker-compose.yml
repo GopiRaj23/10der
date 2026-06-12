@@ -35,6 +35,7 @@ services:
     environment:
       DATABASE_URL: postgresql+psycopg2://${POSTGRES_USER:-tenderradar}:${POSTGRES_PASSWORD:-tenderradar}@db:5432/${POSTGRES_DB:-tenderradar}
       REDIS_URL: redis://redis:6379/0
+      FRONTEND_ORIGIN: http://localhost
       SCHEDULER_ENABLED: "false"   # the dedicated scheduler service owns jobs
     volumes:
       - storage:/app/storage
