@@ -102,8 +102,9 @@ The `.env` file controls:
 - **DEMO_MODE=false** (default) → scrape **real** tenders from the live portals using the
   free Scrapling engine — no API keys. Needs your machine to reach those portals. Set
   **DEMO_MODE=true** for clearly-labelled **sample** data instead (offline, first look).
-- The backend image runs `scrapling install` at build time (free Chromium download) so
-  JS-heavy portals like GeM work out of the box.
+- **INSTALL_BROWSER=false** (default) → keeps the image slim. The NIC/CPPP portals scrape
+  via HTTP and need no browser. Set **INSTALL_BROWSER=true** (and rebuild) to bake in
+  Chromium for **GeM/IREPS** — only if you have Docker disk headroom (~400 MB extra).
 - **DATABASE_URL** → PostgreSQL connection (overridden in compose for Docker)
 - **FRONTEND_ORIGIN=http://localhost** → CORS origin for API
 

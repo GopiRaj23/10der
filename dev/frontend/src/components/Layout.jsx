@@ -158,9 +158,9 @@ export default function Layout() {
             <FlaskConical className="h-4 w-4 shrink-0" />
             <span>
               <b>Live mode.</b> NIC portals (CPPP, eTenders, TN, AP, MH, UP, DL, KL) are active.
-              The stealth browser isn't installed yet, so <b>GeM and JS-heavy portals are skipped</b> —
-              run <code className="mx-1 rounded bg-sky-100 px-1">scrapling install</code> in the backend
-              once (free download), then restart.
+              The stealth browser isn't installed, so <b>GeM and JS-heavy portals are skipped</b> —
+              enable it with <code className="mx-1 rounded bg-sky-100 px-1">scrapling install</code> (local)
+              or <code className="mx-1 rounded bg-sky-100 px-1">INSTALL_BROWSER=true</code> + rebuild (Docker).
             </span>
           </div>
         )}

@@ -2,7 +2,7 @@
 #   nginx (:80)  ->  frontend (React/nginx)  +  backend (FastAPI)
 #   scheduler    ->  APScheduler worker (scraping, digests, reports, archiver)
 #   db           ->  PostgreSQL 16 (full-text search)
-#   redis        ->  Redis 7 (Firecrawl cache, scrape locks)
+#   redis        ->  Redis 7 (page cache, scrape locks)
 #
 # Usage:  cp .env.example .env   &&   docker compose up --build
 services:
@@ -30,7 +30,12 @@ services:
       retries: 10
 
   backend:
-    build: ./backend
+    build:
+      context: ./backend
+      args:
+        # Set INSTALL_BROWSER=true in .env to bake in Chromium for GeM/IREPS.
+        # Default false keeps the image slim (NIC/CPPP portals don't need it).
+        INSTALL_BROWSER: ${INSTALL_BROWSER:-false}
     env_file: .env
     environment:
       DATABASE_URL: postgresql+psycopg2://${POSTGRES_USER:-tenderradar}:${POSTGRES_PASSWORD:-tenderradar}@db:5432/${POSTGRES_DB:-tenderradar}
@@ -52,7 +57,10 @@ services:
              uvicorn app.main:app --host 0.0.0.0 --port 8000"
 
   scheduler:
-    build: ./backend
+    build:
+      context: ./backend
+      args:
+        INSTALL_BROWSER: ${INSTALL_BROWSER:-false}
     env_file: .env
     environment:
       DATABASE_URL: postgresql+psycopg2://${POSTGRES_USER:-tenderradar}:${POSTGRES_PASSWORD:-tenderradar}@db:5432/${POSTGRES_DB:-tenderradar}

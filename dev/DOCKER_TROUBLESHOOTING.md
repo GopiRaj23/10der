@@ -23,6 +23,31 @@ If you're seeing "no page found error" when accessing `http://localhost`, follow
 
 ## Common Issues & Solutions
 
+### Issue 0: Build fails with "input/output error" extracting a layer
+**Symptom:** the build runs for a while then fails unpacking the image, e.g.
+```
+failed to extract layer ... write .../ms-playwright/chromium_headless_shell-.../chrome-headless-shell: input/output error
+```
+**Cause:** Docker Desktop's virtual disk ran out of space while unpacking the large
+Chromium browser layer. By default the browser is now **opt-in** precisely to avoid this.
+
+**Solution:**
+```bash
+# 1. Reclaim Docker disk space
+docker compose down
+docker system prune -af          # removes stopped containers, unused images
+docker builder prune -af         # removes build cache
+
+# 2. Make sure the browser is NOT baked in (default). In .env:
+#      INSTALL_BROWSER=false
+# 3. Rebuild — the slim image scrapes the NIC/CPPP portals fine without a browser
+docker compose up --build
+```
+If you specifically need **GeM** (which requires the browser), first free up space
+(or raise Docker Desktop → Settings → Resources → Disk image size), then set
+`INSTALL_BROWSER=true` in `.env` and rebuild. The NIC/CPPP portals deliver real
+data without it.
+
 ### Issue 1: Frontend Build Failed
 **Symptom:** Frontend container exits immediately or shows build errors in logs
 **Solution:**

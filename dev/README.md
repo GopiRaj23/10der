@@ -84,10 +84,12 @@ no API keys, powered by [Scrapling](https://github.com/D4Vinci/Scrapling). Two r
    (`eprocure.gov.in`, `bidplus.gem.gov.in`, …). Run it on your own machine/server, **not** a
    locked-down CI/cloud box whose egress allowlist blocks those hosts (you'd get `403
    Host not in allowlist`).
-2. **One-time browser setup for JS portals** — `scrapling install` (free Chromium download,
-   already baked into the backend Docker image). NIC/GePNIC portals work without it via
-   Chrome-impersonated HTTP; the stealth browser unlocks GeM/IREPS and acts as a fallback
-   when a portal's WAF blocks plain HTTP.
+2. **(Optional) browser for JS portals** — NIC/GePNIC portals (CPPP + 7 state portals + MoD)
+   scrape via Chrome-impersonated **HTTP and need no browser**. GeM/IREPS render with JS, so
+   they need a stealth headless Chromium:
+   - **Local (no Docker):** run `scrapling install` once (free ~400 MB download).
+   - **Docker:** set `INSTALL_BROWSER=true` in `.env` and rebuild — kept opt-in so the default
+     image stays slim (a large image can exhaust a small Docker Desktop disk).
 
 **Verify live access before trusting the app** — this calls the real scraper and prints what it
 finds (bypasses `DEMO_MODE`):

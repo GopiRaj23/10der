@@ -12,10 +12,14 @@ RUN apt-get update && apt-get install -y --no-install-recommends curl \
 COPY requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
 
-# One-time stealth-browser setup for JS-heavy portals (GeM, IREPS) and as a
-# WAF fallback for NIC portals. Free download (~400 MB of Chromium + libs);
-# comment this out if you only need the HTTP-scraped portals or demo mode.
-RUN scrapling install
+# Stealth browser for JS portals (GeM/IREPS) is OPT-IN — it adds ~400 MB of
+# Chromium to the image, which can exhaust a small Docker Desktop disk. The
+# HTTP-scraped NIC/CPPP portals (the main real-data sources) work WITHOUT it.
+# Enable when you want GeM and have disk headroom:
+#     docker compose build --build-arg INSTALL_BROWSER=true
+# (or set INSTALL_BROWSER=true in .env, which compose passes through).
+ARG INSTALL_BROWSER=false
+RUN if [ "$INSTALL_BROWSER" = "true" ]; then scrapling install; fi
 
 COPY . .
 
