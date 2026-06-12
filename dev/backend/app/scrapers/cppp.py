@@ -50,23 +50,45 @@ class NICGenericScraper(BaseScraper):
             raise ScraperError(str(last_error))
         return self._filter_by_terms(records, search_terms)
 
+    def home_url(self) -> str:
+        """App landing page — visiting it first establishes a JSESSIONID that
+        the 'Latest Active Tenders' list page needs to render server-side."""
+        return f"{self.base_url.rstrip('/')}{self.app_path}?page=WebTenderStatusLists&service=page"
+
     def _scrape_page(self, url: str) -> list[TenderRecord]:
-        # 1) Impersonated HTTP (fast path)
+        # 1) Cookie-persistent HTTP: establish a session on the app landing page,
+        #    then request the list — GePNIC renders it server-side once the
+        #    JSESSIONID exists, so this usually avoids needing a browser at all.
         http_error: Exception | None = None
+        fetched_ok = False
         try:
-            page = self.fetch_http(url)
+            page = self.fetch_session([self.base_url, self.home_url()], url)
+            fetched_ok = True
             records = self._parse_nic_table(page, url)
             if records:
                 return records
+            self.logger.info("Session HTTP fetch OK (200) but 0 tender rows parsed "
+                             "— trying stealth browser render")
         except ScraperError as exc:
             http_error = exc
             self.logger.warning("HTTP fetch failed (%s) — trying stealth browser", exc)
 
-        # 2) Stealth browser render (WAF/JS wall)
+        # 2) Stealth browser render (JS-rendered list / session / WAF wall)
         try:
-            rendered = engine.stealth_page(url, wait_selector="table", timeout_ms=60000)
+            rendered = engine.stealth_page(url, wait_selector="table#table",
+                                           timeout_ms=60000)
         except engine.StealthUnavailable as exc:
-            # No browser installed: surface the most useful error
+            if fetched_ok:
+                # The page came back fine over HTTP — the list just isn't in the
+                # static HTML. Be explicit so this isn't mistaken for a network
+                # problem: the rows are JS/session-rendered and need the browser.
+                raise ScraperError(
+                    "fetched the list page over HTTP (200) but found no tender "
+                    "rows in the static HTML — this GePNIC instance renders the "
+                    "list with JS/session. Enable the browser to scrape it: "
+                    "INSTALL_BROWSER=true + rebuild (Docker) or `scrapling "
+                    "install` (local)."
+                ) from exc
             raise ScraperError(str(http_error or exc)) from exc
         except engine.EngineError as exc:
             raise ScraperError(str(http_error or exc)) from exc

@@ -122,6 +122,39 @@ def http_page(url: str, *, timeout: int = 30) -> Page:
     return page
 
 
+def session_page(warmup_urls: list[str], target_url: str, *,
+                 timeout: int = 30) -> Page:
+    """Fetch ``target_url`` inside ONE cookie-persistent session, after visiting
+    ``warmup_urls`` first. curl_cffi keeps the cookie jar, so a JSESSIONID set
+    by the warm-up requests is reused — many GePNIC/JSF portals only render
+    their tender list once such a session cookie exists, which lets us scrape
+    them over HTTP without a browser.
+    """
+    if (page := _cached("session", target_url)) is not None:
+        return page
+    from scrapling.fetchers import FetcherSession
+
+    try:
+        with FetcherSession(
+            impersonate=IMPERSONATE, stealthy_headers=True, timeout=timeout,
+            retries=HTTP_RETRIES, follow_redirects=True, verify=False,
+            proxy=settings.proxy_url or None,
+        ) as sess:
+            for u in warmup_urls:
+                try:
+                    sess.get(u)  # best-effort: just here to set cookies
+                except Exception as exc:  # noqa: BLE001
+                    logger.debug("session warm-up %s failed: %s", u, exc)
+            resp = sess.get(target_url)
+    except Exception as exc:
+        raise EngineError(f"session fetch failed for {target_url}: {exc}") from exc
+    if resp.status >= 400:
+        raise EngineError(f"HTTP {resp.status} for {target_url}")
+    page = Page(url=target_url, status=resp.status, html=resp.html_content)
+    _store("session", target_url, page)
+    return page
+
+
 def _browser_fetch(fetcher_name: str, url: str, *, wait_selector: str | None,
                    timeout_ms: int, network_idle: bool) -> Page:
     if (page := _cached(fetcher_name, url)) is not None:

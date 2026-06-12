@@ -134,6 +134,15 @@ class BaseScraper(ABC):
         except engine.EngineError as exc:
             raise ScraperError(str(exc)) from exc
 
+    def fetch_session(self, warmup_urls: list[str], target_url: str) -> engine.Page:
+        """Cookie-persistent fetch: visit ``warmup_urls`` to establish a session,
+        then fetch ``target_url`` reusing the cookies (for JSF/GePNIC portals)."""
+        self._pre_fetch(target_url)
+        try:
+            return engine.session_page(warmup_urls, target_url)
+        except engine.EngineError as exc:
+            raise ScraperError(str(exc)) from exc
+
     # --- parsing helpers ----------------------------------------------------
 
     DATE_FORMATS = (
