@@ -22,6 +22,7 @@ backend/storage/raw/*
 *.db
 *.sqlite3
 *.log
+dump.rdb
 
 # OS / editor
 .DS_Store

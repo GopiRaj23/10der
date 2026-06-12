@@ -6,4 +6,5 @@ dist/
 .venv/
 .env
 *.log
+dump.rdb
 .DS_Store
