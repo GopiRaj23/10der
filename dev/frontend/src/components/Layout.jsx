@@ -147,18 +147,20 @@ export default function Layout() {
             <span>
               <b>DEMO DATA</b> — these are realistic <b>sample</b> tenders, not live listings,
               so they won't appear on the official portals. To pull real tenders, set
-              <code className="mx-1 rounded bg-orange-200 px-1">DEMO_MODE=false</code> (and add a
-              Firecrawl API key) in your <code className="rounded bg-orange-200 px-1">.env</code>, then restart.
+              <code className="mx-1 rounded bg-orange-200 px-1">DEMO_MODE=false</code> in your
+              <code className="mx-1 rounded bg-orange-200 px-1">.env</code> and restart — scraping is
+              free (Scrapling engine), no API key needed.
             </span>
           </div>
         )}
-        {config && !config.demo_mode && !config.firecrawl_configured && (
+        {config && !config.demo_mode && config.stealth_browser_ready === false && (
           <div className="flex items-center gap-2 bg-sky-50 px-4 py-2 text-[11px] text-sky-800 lg:px-6">
             <FlaskConical className="h-4 w-4 shrink-0" />
             <span>
-              <b>Live mode</b> (free scraping). NIC portals (CPPP, eTenders, TN, AP, MH, UP, DL, KL) are
-              active; <b>GeM and custom-platform portals need a Firecrawl key</b> — add
-              <code className="mx-1 rounded bg-sky-100 px-1">FIRECRAWL_API_KEY</code> for full coverage.
+              <b>Live mode.</b> NIC portals (CPPP, eTenders, TN, AP, MH, UP, DL, KL) are active.
+              The stealth browser isn't installed yet, so <b>GeM and JS-heavy portals are skipped</b> —
+              run <code className="mx-1 rounded bg-sky-100 px-1">scrapling install</code> in the backend
+              once (free download), then restart.
             </span>
           </div>
         )}

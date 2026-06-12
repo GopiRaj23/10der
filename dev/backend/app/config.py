@@ -34,12 +34,8 @@ class Settings(BaseSettings):
     # Rate limiting
     rate_limit: str = "100/minute"
 
-    # Firecrawl
-    firecrawl_api_key: str = ""
-    firecrawl_base_url: str = "https://api.firecrawl.dev/v1"
-    firecrawl_cache_ttl_seconds: int = 1800
-
-    # Scraping
+    # Scraping (engine: Scrapling — free, no API keys)
+    scrape_cache_ttl_seconds: int = 1800   # fetched-page cache in Redis
     respect_robots_txt: bool = True
     scrape_interval_hours: int = 6
     scrape_delay_seconds: float = 5.0
@@ -75,10 +71,6 @@ class Settings(BaseSettings):
 
     # Tier limits
     free_tier_keyword_limit: int = 5
-
-    @property
-    def firecrawl_configured(self) -> bool:
-        return bool(self.firecrawl_api_key.strip())
 
 
 @lru_cache

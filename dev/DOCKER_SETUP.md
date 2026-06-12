@@ -99,11 +99,11 @@ docker compose up
 ## Environment Variables
 
 The `.env` file controls:
-- **DEMO_MODE=false** (default) → scrape **real** tenders from the live portals. Needs your
-  machine to reach those portals and (recommended) a Firecrawl key. Set **DEMO_MODE=true** to
-  use clearly-labelled **sample** data instead (great for a first look, offline, no keys).
-- **FIRECRAWL_API_KEY** → strongly recommended for real data: unlocks GeM + JS-heavy portals
-  and makes NIC portals reliable. Free tier at https://firecrawl.dev
+- **DEMO_MODE=false** (default) → scrape **real** tenders from the live portals using the
+  free Scrapling engine — no API keys. Needs your machine to reach those portals. Set
+  **DEMO_MODE=true** for clearly-labelled **sample** data instead (offline, first look).
+- The backend image runs `scrapling install` at build time (free Chromium download) so
+  JS-heavy portals like GeM work out of the box.
 - **DATABASE_URL** → PostgreSQL connection (overridden in compose for Docker)
 - **FRONTEND_ORIGIN=http://localhost** → CORS origin for API
 

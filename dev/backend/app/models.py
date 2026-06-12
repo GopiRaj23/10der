@@ -81,7 +81,7 @@ class PortalSource(Base):
     code: Mapped[str] = mapped_column(String(40), unique=True, nullable=False)  # e.g. "cppp"
     name: Mapped[str] = mapped_column(String(160), nullable=False)
     base_url: Mapped[str] = mapped_column(String(500), nullable=False)
-    scraper_type: Mapped[str] = mapped_column(String(20), default="firecrawl")  # firecrawl | playwright | stub
+    scraper_type: Mapped[str] = mapped_column(String(20), default="http")  # http | browser | stub
     portal_group: Mapped[str] = mapped_column(String(20), default="central")    # central | state
     state: Mapped[str | None] = mapped_column(String(80))
     tier_required: Mapped[str] = mapped_column(String(20), default="pro")       # free | pro

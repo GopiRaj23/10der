@@ -18,20 +18,21 @@ from .models import Keyword, PortalSource, User
 logger = logging.getLogger("tenderradar.seed")
 
 # code, name, base_url, scraper_type, group, state, tier, notes
+# scraper_type: http (impersonated HTTP) | browser (stealth Chromium) | stub
 PORTALS = [
     # --- Central government ---
     ("gem", "GeM (Government e-Marketplace)", "https://bidplus.gem.gov.in",
-     "playwright", "central", None, "free", "Bids + products + services"),
+     "browser", "central", None, "free", "Bids + products + services"),
     ("cppp", "CPPP (Central Public Procurement Portal)", "https://eprocure.gov.in",
-     "firecrawl", "central", None, "free", "NIC-hosted, main central portal"),
+     "http", "central", None, "free", "NIC-hosted, main central portal"),
     ("etenders-nic", "eProcurement NIC (etenders.gov.in)", "https://etenders.gov.in",
-     "firecrawl", "central", None, "free", "Works & services tenders"),
+     "http", "central", None, "free", "Works & services tenders"),
     ("defproc", "Defence eProcurement (MoD)", "https://defproc.gov.in",
-     "firecrawl", "central", None, "pro", "Ministry of Defence tenders"),
+     "http", "central", None, "pro", "Ministry of Defence tenders"),
     ("drdo", "DRDO eTender", "https://www.drdo.gov.in",
      "stub", "central", None, "pro", "R&D and supply tenders"),
     ("ireps", "IREPS (Indian Railways)", "https://www.ireps.gov.in",
-     "playwright", "central", None, "pro", "Railway tenders"),
+     "browser", "central", None, "pro", "Railway tenders"),
     ("bhel", "BHEL eProcurement", "https://www.bhel.com/eprocurement",
      "stub", "central", None, "pro", "PSU — power & industrial"),
     ("ongc", "ONGC eTender", "https://etender.ongc.co.in",
@@ -40,23 +41,23 @@ PORTALS = [
      "stub", "central", None, "pro", "Hindustan Aeronautics Ltd"),
     # --- State government ---
     ("tn", "Tamil Nadu eTenders", "https://tntenders.gov.in",
-     "firecrawl", "state", "Tamil Nadu", "pro", "GePNIC instance"),
+     "http", "state", "Tamil Nadu", "pro", "GePNIC instance"),
     ("ka", "Karnataka eProcurement", "https://eproc.karnataka.gov.in",
      "stub", "state", "Karnataka", "pro", "Custom platform"),
     ("ap", "Andhra Pradesh eProcurement", "https://eprocure.ap.gov.in",
-     "firecrawl", "state", "Andhra Pradesh", "pro", "GePNIC instance"),
+     "http", "state", "Andhra Pradesh", "pro", "GePNIC instance"),
     ("tg", "Telangana eProcurement", "https://tender.telangana.gov.in",
      "stub", "state", "Telangana", "pro", "Custom platform"),
     ("mh", "Maharashtra eTenders", "https://mahatenders.gov.in",
-     "firecrawl", "state", "Maharashtra", "pro", "GePNIC instance"),
+     "http", "state", "Maharashtra", "pro", "GePNIC instance"),
     ("gj", "Gujarat nProcure", "https://www.nprocure.com",
      "stub", "state", "Gujarat", "pro", "(n)Code platform"),
     ("up", "Uttar Pradesh eTender", "https://etender.up.nic.in",
-     "firecrawl", "state", "Uttar Pradesh", "pro", "GePNIC instance"),
+     "http", "state", "Uttar Pradesh", "pro", "GePNIC instance"),
     ("dl", "Delhi Govt Procurement", "https://govtprocurement.delhi.gov.in",
-     "firecrawl", "state", "Delhi", "pro", "GePNIC instance"),
+     "http", "state", "Delhi", "pro", "GePNIC instance"),
     ("kl", "Kerala eTenders", "https://etenders.kerala.gov.in",
-     "firecrawl", "state", "Kerala", "pro", "GePNIC instance"),
+     "http", "state", "Kerala", "pro", "GePNIC instance"),
     ("rj", "Rajasthan SPPP", "https://sppp.rajasthan.gov.in",
      "stub", "state", "Rajasthan", "pro", "SPPP portal"),
 ]
@@ -76,6 +77,9 @@ def seed_portals(db) -> int:
     for code, name, url, scraper_type, group, state, tier, notes in PORTALS:
         existing = db.scalar(select(PortalSource).where(PortalSource.code == code))
         if existing:
+            # Keep engine metadata in sync on reseeds (e.g. firecrawl→scrapling)
+            existing.scraper_type = scraper_type
+            existing.notes = notes
             continue
         db.add(PortalSource(
             code=code, name=name, base_url=url, scraper_type=scraper_type,

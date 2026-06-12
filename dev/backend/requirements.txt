@@ -14,7 +14,9 @@ slowapi>=0.1.9
 APScheduler>=3.10,<4.0
 reportlab>=4.1
 openpyxl>=3.1
-beautifulsoup4>=4.12
 jinja2>=3.1
 python-dateutil>=2.9
-playwright>=1.44
+# Scraping engine — free/open-source (replaces Firecrawl). Pulls curl_cffi
+# (Chrome TLS impersonation) plus playwright + patchright (stealth Chromium).
+# Run `scrapling install` once after pip install to download the browser.
+scrapling[fetchers]>=0.4.9,<0.5

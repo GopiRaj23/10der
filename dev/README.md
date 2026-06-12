@@ -19,7 +19,7 @@ intelligence reports**.
 | Backend | Python FastAPI + SQLAlchemy 2 + Pydantic v2 |
 | Database | PostgreSQL 16 (`tsvector` full-text search) — SQLite fallback for quick hacking |
 | Cache / locks | Redis 7 (graceful in-memory fallback) |
-| Scraping | Firecrawl API (primary) + Playwright headless Chromium (JS-heavy portals) + BeautifulSoup |
+| Scraping | [Scrapling](https://github.com/D4Vinci/Scrapling) (free/open-source): Chrome TLS-impersonated HTTP + stealth headless Chromium for JS/anti-bot portals |
 | Auth | JWT (15-min access / 7-day refresh) + bcrypt (12 rounds) + email verification + OTP reset |
 | Jobs | APScheduler (in-process or standalone service) |
 | Email | SMTP or SendGrid (console logging in dev) |
@@ -77,16 +77,17 @@ npm run dev                                 # http://localhost:5173 (proxies /ap
 
 ## Live data vs demo mode
 
-**`DEMO_MODE=false` (default) scrapes REAL tenders** from the live portals. Two requirements:
+**`DEMO_MODE=false` (default) scrapes REAL tenders** from the live portals — completely free,
+no API keys, powered by [Scrapling](https://github.com/D4Vinci/Scrapling). Two requirements:
 
 1. **Network reach** — the machine running the scraper must be able to reach the portals
    (`eprocure.gov.in`, `bidplus.gem.gov.in`, …). Run it on your own machine/server, **not** a
    locked-down CI/cloud box whose egress allowlist blocks those hosts (you'd get `403
    Host not in allowlist`).
-2. **A Firecrawl key (strongly recommended)** — set `FIRECRAWL_API_KEY=fc-...` (free tier at
-   <https://firecrawl.dev>). It renders JS portals (GeM), defeats anti-bot pages and makes NIC
-   portals far more reliable. Without it only the NIC/GePNIC portals are scrapable via plain
-   HTTP, and even those may be blocked by the portal's bot protection.
+2. **One-time browser setup for JS portals** — `scrapling install` (free Chromium download,
+   already baked into the backend Docker image). NIC/GePNIC portals work without it via
+   Chrome-impersonated HTTP; the stealth browser unlocks GeM/IREPS and acts as a fallback
+   when a portal's WAF blocks plain HTTP.
 
 **Verify live access before trusting the app** — this calls the real scraper and prints what it
 finds (bypasses `DEMO_MODE`):
@@ -102,9 +103,6 @@ matching, scoring, alerts, reports, dashboards, admin — is evaluable offline w
 dependencies. These are clearly labelled "DEMO DATA" in the UI and **will not appear on the
 official portals**.
 
-Playwright is the fallback renderer for GeM/IREPS when Firecrawl is absent:
-`playwright install chromium` (uncomment the line in `backend/Dockerfile` for containers).
-
 ### Re-matching keywords against already-collected tenders
 
 Adding or editing a keyword automatically re-scores it against every tender already in the
@@ -117,8 +115,8 @@ runs scrapes automatically on each portal's interval.
 
 | Portal | Code | Engine | Status |
 |---|---|---|---|
-| CPPP eprocure.gov.in | `cppp` | Firecrawl + httpx/bs4 fallback | ✅ **reference implementation** |
-| GeM bidplus.gem.gov.in | `gem` | Firecrawl + Playwright fallback | ✅ **reference implementation** |
+| CPPP eprocure.gov.in | `cppp` | impersonated HTTP + stealth-browser fallback | ✅ **reference implementation** |
+| GeM bidplus.gem.gov.in | `gem` | stealth headless Chromium | ✅ **reference implementation** |
 | etenders.gov.in (NIC) | `etenders-nic` | NIC parser (shared w/ CPPP) | ✅ working parse core |
 | defproc.gov.in (MoD) | `defproc` | NIC parser | ✅ working parse core |
 | TN / AP / MH / UP / DL / KL | `tn ap mh up dl kl` | NIC parser | ✅ working parse core |
@@ -150,7 +148,7 @@ dev/
 │   │   ├── seed.py             # 19 portals + admin + demo users (+ --scrape)
 │   │   ├── routers/            # auth users keywords tenders portals scrape
 │   │   │                       # reports dashboard admin
-│   │   ├── scrapers/           # base, firecrawl_client, cppp, gem, stubs, demo, registry
+│   │   ├── scrapers/           # base, engine (scrapling), cppp, gem, stubs, demo, registry
 │   │   ├── services/           # matching (relevance engine), scrape_service,
 │   │   │                       # report_service (PDF/CSV/XLSX), email, cache, ai_summary
 │   │   └── utils/              # sanitize (XSS), timeutil (UTC↔IST)
@@ -194,7 +192,7 @@ alembic revision --autogenerate -m "add column"        # after editing models.py
 `POST /auth/{register,login,refresh,forgot-password,reset-password,verify-email}` ·
 `GET/PUT /users/me` · `GET /users/me/notifications` ·
 `GET/POST/PUT/DELETE /keywords` · `POST /keywords/rescan` (re-match vs collected tenders) ·
-`GET /config` (public: demo/live + firecrawl flags) ·
+`GET /config` (public: demo/live + engine flags) ·
 `GET /tenders` (filters: keyword, portal, state, category, closing window, value range,
 score, status, sort, pagination) · `GET /tenders/bookmarks` · `GET /tenders/{id}` ·
 `POST /tenders/{id}/status` · `GET /tenders/{id}/related` · `GET /tenders/{id}/summary` ·

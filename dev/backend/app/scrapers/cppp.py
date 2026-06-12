@@ -4,40 +4,14 @@ Reference implementation #1. The same NIC "GePNIC" software powers most
 central/state portals, so the parsing core lives in `NICGenericScraper` and
 is reused by every NIC-based portal (etenders.gov.in, tntenders.gov.in, ...).
 
-Strategy:
- 1. Firecrawl /scrape with a structured-extract schema (primary)
- 2. Direct httpx fetch + BeautifulSoup table parse (fallback)
+Strategy (all free, via Scrapling):
+ 1. Impersonated HTTP fetch (Chrome TLS fingerprint) + table parse
+ 2. Stealth headless-Chromium render (when the portal's WAF blocks plain HTTP)
 """
 from __future__ import annotations
 
-from bs4 import BeautifulSoup
-
+from . import engine
 from .base import BaseScraper, ScraperError, TenderRecord
-from .firecrawl_client import FirecrawlNotConfigured, firecrawl
-
-# Structured-extract schema sent to Firecrawl for NIC list pages.
-NIC_EXTRACT_SCHEMA = {
-    "type": "object",
-    "properties": {
-        "tenders": {
-            "type": "array",
-            "items": {
-                "type": "object",
-                "properties": {
-                    "tender_id": {"type": "string"},
-                    "title": {"type": "string"},
-                    "organisation": {"type": "string"},
-                    "published_date": {"type": "string"},
-                    "closing_date": {"type": "string"},
-                    "opening_date": {"type": "string"},
-                    "document_url": {"type": "string"},
-                },
-                "required": ["tender_id", "title"],
-            },
-        }
-    },
-    "required": ["tenders"],
-}
 
 
 class NICGenericScraper(BaseScraper):
@@ -65,7 +39,7 @@ class NICGenericScraper(BaseScraper):
             url = self.list_url(page)
             try:
                 page_records = self._scrape_page(url)
-            except Exception as exc:  # try next strategy/page, keep what we have
+            except Exception as exc:  # keep what we have from earlier pages
                 last_error = exc
                 self.logger.warning("Page %s failed: %s", page, exc)
                 break
@@ -77,56 +51,41 @@ class NICGenericScraper(BaseScraper):
         return self._filter_by_terms(records, search_terms)
 
     def _scrape_page(self, url: str) -> list[TenderRecord]:
-        # 1) Firecrawl structured extraction
+        # 1) Impersonated HTTP (fast path)
+        http_error: Exception | None = None
         try:
-            data = firecrawl.scrape(
-                url,
-                formats=["html"],
-                extract_schema=NIC_EXTRACT_SCHEMA,
-                extract_prompt="Extract every tender row from the latest active tenders table.",
-            )
-            extracted = (data.get("extract") or {}).get("tenders") or []
-            html = data.get("html")
-            if extracted:
-                return [self._record_from_extract(t, url, html) for t in extracted]
-            if html:
-                return self._parse_nic_table(html, url)
-        except FirecrawlNotConfigured:
-            self.logger.info("Firecrawl not configured — falling back to direct fetch")
-        except Exception as exc:
-            self.logger.warning("Firecrawl failed (%s) — falling back to direct fetch", exc)
+            page = self.fetch_http(url)
+            records = self._parse_nic_table(page, url)
+            if records:
+                return records
+        except ScraperError as exc:
+            http_error = exc
+            self.logger.warning("HTTP fetch failed (%s) — trying stealth browser", exc)
 
-        # 2) Direct fetch + parse
-        resp = self.http_get(url)
-        return self._parse_nic_table(resp.text, url)
+        # 2) Stealth browser render (WAF/JS wall)
+        try:
+            rendered = engine.stealth_page(url, wait_selector="table", timeout_ms=60000)
+        except engine.StealthUnavailable as exc:
+            # No browser installed: surface the most useful error
+            raise ScraperError(str(http_error or exc)) from exc
+        except engine.EngineError as exc:
+            raise ScraperError(str(http_error or exc)) from exc
+        return self._parse_nic_table(rendered, url)
 
     # --- parsing ---------------------------------------------------------------
 
-    def _record_from_extract(self, t: dict, page_url: str, raw_html: str | None) -> TenderRecord:
-        return TenderRecord(
-            tender_ref_no=(t.get("tender_id") or "").strip()[:160],
-            title=(t.get("title") or "").strip(),
-            organisation=(t.get("organisation") or "").strip() or None,
-            published_date=self.parse_date(t.get("published_date")),
-            closing_date=self.parse_dt(t.get("closing_date")),
-            document_url=t.get("document_url") or page_url,
-            raw_url=page_url,
-            state=getattr(self.portal, "state", None),
-            raw_html=raw_html,
-        )
-
-    def _parse_nic_table(self, html: str, page_url: str) -> list[TenderRecord]:
+    def _parse_nic_table(self, page: engine.Page, page_url: str) -> list[TenderRecord]:
         """Parse the GePNIC 'Latest Active Tenders' list table.
 
         Columns: S.No | e-Published Date | Closing Date | Opening Date |
                  Title and Ref.No./Tender ID | Organisation Chain
         """
-        soup = BeautifulSoup(html, "html.parser")
-        table = soup.find("table", id="table") or soup.find("table", class_="list_table")
+        doc = page.select()
+        table = doc.css("table#table").first or doc.css("table.list_table").first
         if table is None:
             # Some instances render the list inside nested tables
-            for cand in soup.find_all("table"):
-                head = cand.get_text(" ", strip=True)[:300].lower()
+            for cand in doc.css("table"):
+                head = " ".join(cand.get_all_text(" ", strip=True).split())[:300].lower()
                 if "e-published" in head and "closing" in head:
                     table = cand
                     break
@@ -134,16 +93,17 @@ class NICGenericScraper(BaseScraper):
             return []
 
         records: list[TenderRecord] = []
-        for row in table.find_all("tr"):
-            cells = row.find_all("td")
+        for row in table.css("tr"):
+            cells = row.css("td")
             if len(cells) < 6:
                 continue
-            texts = [c.get_text(" ", strip=True) for c in cells]
+            # collapse interior newlines/whitespace runs inside each cell
+            texts = [" ".join(c.get_all_text(" ", strip=True).split()) for c in cells]
             if not texts[0].rstrip(".").isdigit():
                 continue  # header / pagination rows
             title_cell = cells[4]
-            link = title_cell.find("a")
-            title_text = title_cell.get_text(" ", strip=True)
+            link = title_cell.css("a").first
+            title_text = texts[4]
             # Title cell looks like: "Supply of ... [ref-no][tender-id]"
             ref_no = title_text
             title = title_text
@@ -151,7 +111,7 @@ class NICGenericScraper(BaseScraper):
                 title = title_text.split("[")[0].strip()
                 refs = [p.strip("[] ") for p in title_text.split("[")[1:]]
                 ref_no = refs[-1] if refs else title_text
-            href = link.get("href") if link else None
+            href = link.attrib.get("href") if link is not None else None
             if href and href.startswith("/"):
                 href = f"{self.base_url.rstrip('/')}{href}"
             records.append(TenderRecord(
@@ -163,7 +123,7 @@ class NICGenericScraper(BaseScraper):
                 document_url=href or page_url,
                 raw_url=page_url,
                 state=getattr(self.portal, "state", None),
-                raw_html=str(row)[:20000],
+                raw_html=row.html_content[:20000],
             ))
         return records
 

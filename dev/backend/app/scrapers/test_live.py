@@ -9,8 +9,8 @@ Usage:
     python -m app.scrapers.test_live cppp         # test one portal
     python -m app.scrapers.test_live cppp gem tn  # test several
 
-What it prints: how the scraper was resolved (real vs stub), whether Firecrawl
-is configured, the number of tenders found, and a sample of titles + refs.
+What it prints: how the scraper was resolved (real vs stub), whether the
+stealth browser is installed, the number of tenders found, and sample titles.
 """
 from __future__ import annotations
 
@@ -49,8 +49,9 @@ def _test_one(db, code: str) -> None:
         print(f"Scraper: {cls.__name__ if cls else 'none'}  — STUB (not implemented, "
               "returns nothing). Custom-platform portal.")
         return
-    print(f"Scraper: {cls.__name__}  (real)")
-    print(f"Firecrawl configured: {settings.firecrawl_configured}  "
+    from .engine import stealth_browser_ready
+    print(f"Scraper: {cls.__name__}  (real, engine: scrapling)")
+    print(f"Stealth browser installed: {stealth_browser_ready()}  "
           f"| DEMO_MODE={settings.demo_mode}")
 
     scraper = cls(portal)
@@ -83,10 +84,11 @@ def main() -> None:
         for code in codes:
             _test_one(db, code)
         print("\n" + "=" * 72)
-        if not settings.firecrawl_configured:
-            print("Tip: set FIRECRAWL_API_KEY in .env to unlock GeM + JS-heavy portals\n"
-                  "     and make NIC portals far more reliable. Get a key at "
-                  "https://firecrawl.dev\n")
+        from .engine import stealth_browser_ready
+        if not stealth_browser_ready():
+            print("Tip: run `scrapling install` once (free browser download) to unlock\n"
+                  "     GeM and other JS-heavy portals, and to give NIC portals a\n"
+                  "     stealth-browser fallback when their WAF blocks plain HTTP.\n")
     finally:
         db.close()
 

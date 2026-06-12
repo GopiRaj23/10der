@@ -12,9 +12,10 @@ RUN apt-get update && apt-get install -y --no-install-recommends curl \
 COPY requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
 
-# Optional: install Chromium for Playwright-based scrapers (GeM/IREPS).
-# Commented out to keep the image slim — uncomment for live scraping.
-# RUN playwright install --with-deps chromium
+# One-time stealth-browser setup for JS-heavy portals (GeM, IREPS) and as a
+# WAF fallback for NIC portals. Free download (~400 MB of Chromium + libs);
+# comment this out if you only need the HTTP-scraped portals or demo mode.
+RUN scrapling install
 
 COPY . .
 

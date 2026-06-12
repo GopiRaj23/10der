@@ -1,6 +1,6 @@
 """Demo-mode scraper: generates realistic sample tenders so the whole product
 (matching, scoring, alerts, reports, dashboards) can be evaluated locally
-without a Firecrawl key or live portal access. Activated by DEMO_MODE=true."""
+without live portal access. Activated by DEMO_MODE=true."""
 from __future__ import annotations
 
 import hashlib

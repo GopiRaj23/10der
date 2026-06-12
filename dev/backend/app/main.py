@@ -103,10 +103,15 @@ def health():
 @app.get("/config", tags=["system"])
 def public_config():
     """Public runtime flags the SPA uses to render the data-source banner."""
+    from .scrapers.engine import stealth_browser_ready
+
     return {
         "app": settings.app_name,
         "environment": settings.environment,
         "demo_mode": settings.demo_mode,
-        "firecrawl_configured": settings.firecrawl_configured,
         "live_scraping": not settings.demo_mode,
+        "scrape_engine": "scrapling",
+        # False until `scrapling install` has downloaded the headless browser;
+        # JS-heavy portals (GeM, IREPS) are skipped while it's missing.
+        "stealth_browser_ready": stealth_browser_ready(),
     }

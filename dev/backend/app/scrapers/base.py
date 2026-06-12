@@ -3,6 +3,10 @@
 Every portal scraper is a standalone class inheriting `BaseScraper`. Scrapers
 NEVER raise out of `safe_scrape()` — failures are logged and returned so a
 broken portal can't take down the scheduler or the API.
+
+Fetching is powered by Scrapling (see `engine.py`): impersonated HTTP for
+plain portals, stealth headless Chromium for JS/anti-bot ones. robots.txt and
+politeness delays are enforced here, before any request leaves the box.
 """
 from __future__ import annotations
 
@@ -17,6 +21,7 @@ from urllib.parse import urlparse
 import httpx
 
 from ..config import settings
+from . import engine
 
 logger = logging.getLogger(__name__)
 
@@ -101,7 +106,7 @@ class BaseScraper(ABC):
             try:
                 resp = httpx.get(f"{origin}/robots.txt", timeout=10,
                                  headers={"User-Agent": self.user_agent},
-                                 follow_redirects=True)
+                                 follow_redirects=True, verify=False)
                 if resp.status_code == 200:
                     rp.parse(resp.text.splitlines())
                     _robots_cache[origin] = rp
@@ -115,23 +120,19 @@ class BaseScraper(ABC):
             self.logger.warning("robots.txt disallows %s — skipping", url)
         return allowed
 
-    def http_get(self, url: str, **kwargs) -> httpx.Response:
-        """Direct HTTP fetch with rate-limit delay + optional proxy."""
+    def _pre_fetch(self, url: str) -> None:
+        """robots.txt gate + politeness delay, shared by every strategy."""
         if not self.robots_allowed(url):
             raise ScraperError(f"Blocked by robots.txt: {url}")
         time.sleep(settings.scrape_delay_seconds)
-        client_kwargs: dict = {
-            "timeout": 30,
-            "follow_redirects": True,
-            "headers": {"User-Agent": self.user_agent},
-            "verify": False,  # several NIC portals ship broken cert chains
-        }
-        if settings.proxy_url:
-            client_kwargs["proxy"] = settings.proxy_url
-        with httpx.Client(**client_kwargs) as client:
-            resp = client.get(url, **kwargs)
-            resp.raise_for_status()
-            return resp
+
+    def fetch_http(self, url: str) -> engine.Page:
+        """Impersonated HTTP fetch (scrapling Fetcher / curl_cffi)."""
+        self._pre_fetch(url)
+        try:
+            return engine.http_page(url)
+        except engine.EngineError as exc:
+            raise ScraperError(str(exc)) from exc
 
     # --- parsing helpers ----------------------------------------------------
 
@@ -182,44 +183,34 @@ class BaseScraper(ABC):
         return num
 
 
-class PlaywrightScraper(BaseScraper):
-    """Base for JS-heavy portals: renders pages with headless Chromium.
+class BrowserScraper(BaseScraper):
+    """Base for JS-heavy / bot-protected portals: renders pages with scrapling's
+    stealth headless Chromium (fingerprint spoofing), falling back to a plain
+    Chromium render.
 
-    Playwright (and its browsers, via `playwright install chromium`) is an
-    optional runtime dependency — when missing, the scraper reports a clean
-    error instead of crashing the worker.
+    Needs a one-time `scrapling install` (free browser download). When the
+    browser is missing the scraper reports a clean error instead of crashing
+    the worker.
     """
 
-    portal_code = "playwright-base"
+    portal_code = "browser-base"
 
     def render_page(self, url: str, wait_selector: str | None = None,
-                    timeout_ms: int = 45000) -> str:
-        if not self.robots_allowed(url):
-            raise ScraperError(f"Blocked by robots.txt: {url}")
+                    timeout_ms: int = 60000) -> engine.Page:
+        self._pre_fetch(url)
         try:
-            from playwright.sync_api import sync_playwright
-        except ImportError as exc:
-            raise ScraperError("Playwright not installed — `pip install playwright "
-                               "&& playwright install chromium`") from exc
-        time.sleep(settings.scrape_delay_seconds)
-        launch_kwargs: dict = {"headless": True}
-        if settings.proxy_url:
-            launch_kwargs["proxy"] = {"server": settings.proxy_url}
+            return engine.stealth_page(url, wait_selector=wait_selector,
+                                       timeout_ms=timeout_ms)
+        except engine.StealthUnavailable as exc:
+            raise ScraperError(str(exc)) from exc
+        except engine.EngineError as exc:
+            self.logger.warning("Stealth render failed (%s) — trying plain "
+                                "Chromium", exc)
         try:
-            with sync_playwright() as pw:
-                browser = pw.chromium.launch(**launch_kwargs)
-                try:
-                    page = browser.new_page(user_agent=self.user_agent)
-                    page.goto(url, timeout=timeout_ms, wait_until="domcontentloaded")
-                    if wait_selector:
-                        page.wait_for_selector(wait_selector, timeout=timeout_ms)
-                    return page.content()
-                finally:
-                    browser.close()
-        except ScraperError:
-            raise
-        except Exception as exc:
-            raise ScraperError(f"Playwright render failed: {exc}") from exc
+            return engine.dynamic_page(url, wait_selector=wait_selector,
+                                       timeout_ms=timeout_ms)
+        except engine.EngineError as exc:
+            raise ScraperError(str(exc)) from exc
 
     def scrape(self, search_terms: list[str]) -> list[TenderRecord]:
-        raise ScraperNotImplemented(f"{self.portal_code} playwright scraper not implemented")
+        raise ScraperNotImplemented(f"{self.portal_code} browser scraper not implemented")

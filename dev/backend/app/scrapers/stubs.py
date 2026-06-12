@@ -6,7 +6,7 @@ Portals with custom platforms are stubs that share the same interface —
 implement `scrape()` to bring them online; failures/skips are logged and
 never crash the pipeline.
 """
-from .base import BaseScraper, PlaywrightScraper, ScraperNotImplemented, TenderRecord
+from .base import BaseScraper, BrowserScraper, ScraperNotImplemented, TenderRecord
 from .cppp import NICGenericScraper
 
 
@@ -71,14 +71,14 @@ class DRDOScraper(_StubScraper):
     portal_code = "drdo"
 
 
-class IREPSScraper(PlaywrightScraper):
+class IREPSScraper(BrowserScraper):
     """ireps.gov.in — Indian Railways (JSF app, needs session handling)."""
     portal_code = "ireps"
 
     def scrape(self, search_terms: list[str]) -> list[TenderRecord]:
         raise ScraperNotImplemented(
             "ireps: JSF-based portal requires session/viewstate handling — "
-            "Playwright skeleton in place, parser not yet implemented"
+            "browser-render skeleton in place, parser not yet implemented"
         )
 
 
