@@ -12,20 +12,26 @@ RUN apt-get update && apt-get install -y --no-install-recommends curl \
 COPY requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
 
-# Stealth browser for JS portals (GeM/IREPS) is OPT-IN — it adds ~400 MB of
-# Chromium to the image, which can exhaust a small Docker Desktop disk. The
-# HTTP-scraped NIC/CPPP portals (the main real-data sources) work WITHOUT it.
-# Enable when you want GeM and have disk headroom:
-#     docker compose build --build-arg INSTALL_BROWSER=true
-# (or set INSTALL_BROWSER=true in .env, which compose passes through).
-ARG INSTALL_BROWSER=false
-RUN if [ "$INSTALL_BROWSER" = "true" ]; then scrapling install; fi
+# Indian government eProcurement portals (NIC GePNIC, GeM) refuse to serve their
+# tender list without a JavaScript browser, so a stealth headless Chromium is
+# required for real data. To avoid the large image layer that can exhaust a
+# Docker Desktop disk, we split it:
+#   - BUILD time: install only the system LIBRARIES Chromium needs (small, stable)
+#   - RUNTIME (entrypoint): download the Chromium BINARY into a mounted volume
+# Set INSTALL_BROWSER=false to skip both (demo mode / no real scraping).
+ARG INSTALL_BROWSER=true
+RUN if [ "$INSTALL_BROWSER" = "true" ]; then \
+        python -m playwright install-deps chromium && rm -rf /var/lib/apt/lists/*; \
+    fi
 
 COPY . .
+RUN chmod +x docker-entrypoint.sh
 
 EXPOSE 8000
 
 HEALTHCHECK --interval=30s --timeout=5s --start-period=20s \
     CMD curl -fsS http://localhost:8000/health || exit 1
 
+# Entrypoint downloads the browser into the volume on first run, then runs CMD.
+ENTRYPOINT ["/app/docker-entrypoint.sh"]
 CMD ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8000"]

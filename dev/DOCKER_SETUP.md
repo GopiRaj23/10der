@@ -102,9 +102,12 @@ The `.env` file controls:
 - **DEMO_MODE=false** (default) → scrape **real** tenders from the live portals using the
   free Scrapling engine — no API keys. Needs your machine to reach those portals. Set
   **DEMO_MODE=true** for clearly-labelled **sample** data instead (offline, first look).
-- **INSTALL_BROWSER=false** (default) → keeps the image slim. The NIC/CPPP portals scrape
-  via HTTP and need no browser. Set **INSTALL_BROWSER=true** (and rebuild) to bake in
-  Chromium for **GeM/IREPS** — only if you have Docker disk headroom (~400 MB extra).
+- **INSTALL_BROWSER=true** (default) → required for real data: the Indian eProcurement portals
+  (NIC CPPP/eTenders/state, GeM) only serve their tender list to a JavaScript browser. The image
+  installs Chromium's system libs at build and **downloads the browser into a named volume on
+  first run** (so it's kept out of the image and can't exhaust the Docker Desktop disk). First
+  `up` takes an extra ~1–2 min while it downloads; it's cached after. Set **false** for a slim
+  demo-only image.
 - **DATABASE_URL** → PostgreSQL connection (overridden in compose for Docker)
 - **FRONTEND_ORIGIN=http://localhost** → CORS origin for API
 

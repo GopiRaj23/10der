@@ -28,25 +28,30 @@ If you're seeing "no page found error" when accessing `http://localhost`, follow
 ```
 failed to extract layer ... write .../ms-playwright/chromium_headless_shell-.../chrome-headless-shell: input/output error
 ```
-**Cause:** Docker Desktop's virtual disk ran out of space while unpacking the large
-Chromium browser layer. By default the browser is now **opt-in** precisely to avoid this.
-
-**Solution:**
+**Cause:** Docker Desktop's virtual disk ran out of space. This used to happen because
+the browser was baked into the image; it's now **downloaded into a named volume at
+runtime** instead, so this shouldn't recur — but if the disk is genuinely full, reclaim
+space:
 ```bash
-# 1. Reclaim Docker disk space
 docker compose down
 docker system prune -af          # removes stopped containers, unused images
 docker builder prune -af         # removes build cache
-
-# 2. Make sure the browser is NOT baked in (default). In .env:
-#      INSTALL_BROWSER=false
-# 3. Rebuild — the slim image scrapes the NIC/CPPP portals fine without a browser
+# and/or raise Docker Desktop → Settings → Resources → Virtual disk limit
 docker compose up --build
 ```
-If you specifically need **GeM** (which requires the browser), first free up space
-(or raise Docker Desktop → Settings → Resources → Disk image size), then set
-`INSTALL_BROWSER=true` in `.env` and rebuild. The NIC/CPPP portals deliver real
-data without it.
+
+### Issue 0b: "stealth browser not ready" / JS portals empty
+**Symptom:** the app's banner says the stealth browser isn't ready, or the scheduler logs
+`browser download failed`. The Indian eProcurement portals need it for real data.
+**Cause/Fix:** on first `up` the browser downloads into the `browsers` volume (~1–2 min);
+just wait, then it's cached. If it keeps failing:
+```bash
+docker compose logs backend | grep -i entrypoint   # see the install attempt
+# free Docker disk (see Issue 0), then re-trigger the install:
+docker volume rm 10der_browsers 2>/dev/null || docker volume rm dev_browsers
+docker compose up -d
+```
+Only need demo/sample data? Set `INSTALL_BROWSER=false` in `.env` to skip it entirely.
 
 ### Issue 1: Frontend Build Failed
 **Symptom:** Frontend container exits immediately or shows build errors in logs

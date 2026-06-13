@@ -190,3 +190,43 @@ def dynamic_page(url: str, *, wait_selector: str | None = None,
     """Render with plain headless Chromium (fallback to stealth profile)."""
     return _browser_fetch("DynamicFetcher", url, wait_selector=wait_selector,
                           timeout_ms=timeout_ms, network_idle=network_idle)
+
+
+def browser_session_pages(urls: list[str], *, wait_selector: str | None = None,
+                          timeout_ms: int = 60000, settle_ms: int = 2500) -> Page:
+    """Render a sequence of URLs in ONE stealth-browser context and return the
+    LAST page. Cookies and JS state persist across navigations, so portals that
+    only show their list after the human flow (home → list, with the page's own
+    JavaScript establishing the session) render correctly. JS-injected/AJAX rows
+    are captured via network-idle + a settle wait.
+    """
+    if not stealth_browser_ready():
+        raise StealthUnavailable(
+            "Headless Chromium not installed — run `scrapling install` once "
+            "(free) to enable JS-rendered portals (GeM, NIC eProcurement)"
+        )
+    from scrapling.fetchers import StealthySession
+
+    sess_kwargs: dict = {"headless": True}
+    if settings.proxy_url:
+        sess_kwargs["proxy"] = settings.proxy_url
+    final: Page | None = None
+    try:
+        with StealthySession(**sess_kwargs) as sess:
+            for i, url in enumerate(urls):
+                is_last = i == len(urls) - 1
+                fetch_kwargs: dict = {"timeout": timeout_ms, "network_idle": True}
+                if is_last:
+                    fetch_kwargs["wait"] = settle_ms
+                    if wait_selector:
+                        fetch_kwargs["wait_selector"] = wait_selector
+                resp = sess.fetch(url, **fetch_kwargs)
+                final = Page(url=url, status=resp.status, html=resp.html_content)
+    except StealthUnavailable:
+        raise
+    except Exception as exc:
+        raise EngineError(f"browser session failed ({urls[-1]}): {exc}") from exc
+    if final is None:
+        raise EngineError("browser session produced no page")
+    return final
+

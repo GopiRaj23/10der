@@ -33,17 +33,22 @@ services:
     build:
       context: ./backend
       args:
-        # Set INSTALL_BROWSER=true in .env to bake in Chromium for GeM/IREPS.
-        # Default false keeps the image slim (NIC/CPPP portals don't need it).
-        INSTALL_BROWSER: ${INSTALL_BROWSER:-false}
+        # INSTALL_BROWSER=true (default) installs the libs Chromium needs at
+        # build and downloads the browser into the 'browsers' volume at first
+        # run — required for the JS-gated portals (NIC eProcurement, GeM).
+        # Set false for a slim demo-only image.
+        INSTALL_BROWSER: ${INSTALL_BROWSER:-true}
     env_file: .env
     environment:
       DATABASE_URL: postgresql+psycopg2://${POSTGRES_USER:-tenderradar}:${POSTGRES_PASSWORD:-tenderradar}@db:5432/${POSTGRES_DB:-tenderradar}
       REDIS_URL: redis://redis:6379/0
       FRONTEND_ORIGIN: http://localhost
       SCHEDULER_ENABLED: "false"   # the dedicated scheduler service owns jobs
+      PLAYWRIGHT_BROWSERS_PATH: /browsers
+      INSTALL_BROWSER: ${INSTALL_BROWSER:-true}
     volumes:
       - storage:/app/storage
+      - browsers:/browsers
     depends_on:
       db:
         condition: service_healthy
@@ -60,13 +65,16 @@ services:
     build:
       context: ./backend
       args:
-        INSTALL_BROWSER: ${INSTALL_BROWSER:-false}
+        INSTALL_BROWSER: ${INSTALL_BROWSER:-true}
     env_file: .env
     environment:
       DATABASE_URL: postgresql+psycopg2://${POSTGRES_USER:-tenderradar}:${POSTGRES_PASSWORD:-tenderradar}@db:5432/${POSTGRES_DB:-tenderradar}
       REDIS_URL: redis://redis:6379/0
+      PLAYWRIGHT_BROWSERS_PATH: /browsers
+      INSTALL_BROWSER: ${INSTALL_BROWSER:-true}
     volumes:
       - storage:/app/storage
+      - browsers:/browsers
     depends_on:
       backend:
         condition: service_started
@@ -88,3 +96,4 @@ services:
 volumes:
   pgdata:
   storage:
+  browsers:        # stealth Chromium, downloaded once at runtime (kept out of the image)

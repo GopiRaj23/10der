@@ -84,12 +84,19 @@ no API keys, powered by [Scrapling](https://github.com/D4Vinci/Scrapling). Two r
    (`eprocure.gov.in`, `bidplus.gem.gov.in`, …). Run it on your own machine/server, **not** a
    locked-down CI/cloud box whose egress allowlist blocks those hosts (you'd get `403
    Host not in allowlist`).
-2. **(Optional) browser for JS portals** — NIC/GePNIC portals (CPPP + 7 state portals + MoD)
-   scrape via Chrome-impersonated **HTTP and need no browser**. GeM/IREPS render with JS, so
-   they need a stealth headless Chromium:
-   - **Local (no Docker):** run `scrapling install` once (free ~400 MB download).
-   - **Docker:** set `INSTALL_BROWSER=true` in `.env` and rebuild — kept opt-in so the default
-     image stays slim (a large image can exhaust a small Docker Desktop disk).
+2. **The stealth browser (required, free)** — the Indian eProcurement portals (NIC GePNIC:
+   CPPP/eTenders/state portals, and GeM) deliberately refuse to serve their tender list without
+   JavaScript: a plain HTTP request is bounced to an *"enable javascript"* error page. So a
+   stealth headless Chromium is needed (Scrapling renders the human flow — portal home → list —
+   in one browser context, and the page's own JS loads the table).
+   - **Docker (default):** `INSTALL_BROWSER=true` installs Chromium's system libs at build and
+     downloads the browser into a named volume on **first run** (kept out of the image so it
+     can't exhaust the Docker Desktop disk). Nothing to do — just `docker compose up`.
+   - **Local (no Docker):** run `scrapling install` once (free Chromium download).
+
+   The scraper still tries fast Chrome-impersonated **HTTP first** (some GePNIC instances do
+   serve HTML, and it's the path for any future server-rendered portal) and only falls back to
+   the browser when the list isn't in the static HTML.
 
 **Verify live access before trusting the app** — this calls the real scraper and prints what it
 finds (bypasses `DEMO_MODE`):
@@ -117,7 +124,7 @@ runs scrapes automatically on each portal's interval.
 
 | Portal | Code | Engine | Status |
 |---|---|---|---|
-| CPPP eprocure.gov.in | `cppp` | impersonated HTTP + stealth-browser fallback | ✅ **reference implementation** |
+| CPPP eprocure.gov.in | `cppp` | HTTP flow → stealth browser (JS-gated) | ✅ **reference implementation** |
 | GeM bidplus.gem.gov.in | `gem` | stealth headless Chromium | ✅ **reference implementation** |
 | etenders.gov.in (NIC) | `etenders-nic` | NIC parser (shared w/ CPPP) | ✅ working parse core |
 | defproc.gov.in (MoD) | `defproc` | NIC parser | ✅ working parse core |

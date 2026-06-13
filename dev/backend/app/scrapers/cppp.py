@@ -66,24 +66,22 @@ class NICGenericScraper(BaseScraper):
             self.logger.info("HTTP flow OK (200) but 0 tender rows parsed — "
                              "trying stealth browser render")
 
-        # Browser fallback: render the first list page with headless Chromium
+        # Browser fallback: GePNIC requires JavaScript (the no-JS path is
+        # bounced to an "eTender System Exception / enable javascript" page), so
+        # render the human flow — home → list — in one stealth-browser session.
+        # The page's own JS establishes the session and loads the tender table.
         url = self.list_url(1)
+        nav = [*self.home_candidates(), url]
         try:
-            rendered = engine.stealth_page(url, wait_selector="table#table",
-                                           timeout_ms=60000)
+            rendered = engine.browser_session_pages(nav, timeout_ms=60000)
         except engine.StealthUnavailable as exc:
-            if fetched_ok:
-                # HTTP worked end-to-end — the rows just weren't in the HTML.
-                # Be explicit so this isn't mistaken for a network problem.
-                raise ScraperError(
-                    "fetched the portal over HTTP (200) and followed its "
-                    "'Latest Active Tenders' link, but no tender rows were in "
-                    "the HTML — this instance appears to render the list with "
-                    "JavaScript. Enable the browser: INSTALL_BROWSER=true + "
-                    "rebuild (Docker) or `scrapling install` (local). Run "
-                    "test_live --dump for a per-table breakdown."
-                ) from exc
-            raise ScraperError(str(flow_error or exc)) from exc
+            raise ScraperError(
+                "this portal requires JavaScript — GePNIC serves the tender list "
+                "only to a real browser (the no-JS path returns an 'enable "
+                "javascript' error). Enable the free stealth browser: "
+                "INSTALL_BROWSER=true + rebuild (Docker) or `scrapling install` "
+                "(local)."
+            ) from exc
         except engine.EngineError as exc:
             raise ScraperError(str(flow_error or exc)) from exc
         records = self._parse_nic_table(rendered, url)

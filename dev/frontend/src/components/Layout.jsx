@@ -157,10 +157,12 @@ export default function Layout() {
           <div className="flex items-center gap-2 bg-sky-50 px-4 py-2 text-[11px] text-sky-800 lg:px-6">
             <FlaskConical className="h-4 w-4 shrink-0" />
             <span>
-              <b>Live mode.</b> NIC portals (CPPP, eTenders, TN, AP, MH, UP, DL, KL) are active.
-              The stealth browser isn't installed, so <b>GeM and JS-heavy portals are skipped</b> —
-              enable it with <code className="mx-1 rounded bg-sky-100 px-1">scrapling install</code> (local)
-              or <code className="mx-1 rounded bg-sky-100 px-1">INSTALL_BROWSER=true</code> + rebuild (Docker).
+              <b>Live mode — stealth browser not ready.</b> The Indian eProcurement portals require
+              JavaScript, so scraping needs the browser. On Docker it downloads automatically on first
+              run (give it a minute, then it's cached); if this persists, check
+              <code className="mx-1 rounded bg-sky-100 px-1">docker compose logs backend</code> and free
+              Docker disk space. Running locally? Run
+              <code className="mx-1 rounded bg-sky-100 px-1">scrapling install</code> once.
             </span>
           </div>
         )}
