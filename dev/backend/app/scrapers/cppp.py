@@ -17,6 +17,7 @@ browser):
 """
 from __future__ import annotations
 
+import re
 from urllib.parse import urljoin
 
 from . import engine
@@ -113,12 +114,12 @@ class NICGenericScraper(BaseScraper):
                 link = self._find_list_link(home_page)
                 if link:
                     self.logger.info("Following list link found on %s", home)
-                    list_page = self.session_get(sess, link)
+                    list_page = self._get_list(sess, link)
                     break
             if list_page is None:
                 # No link found — request the canonical list URL in-session
                 # (the session cookie alone is enough on some instances).
-                list_page = self.session_get(sess, self.list_url(1))
+                list_page = self._get_list(sess, self.list_url(1))
                 fetched_ok = True
 
             page_records = self._parse_nic_table(list_page, list_page.url)
@@ -129,11 +130,42 @@ class NICGenericScraper(BaseScraper):
                 next_url = self._next_page_url(current, pages + 1)
                 if not next_url:
                     break
-                current = self.session_get(sess, next_url)
+                current = self._get_list(sess, next_url)
                 page_records = self._parse_nic_table(current, current.url)
                 records.extend(page_records)
                 pages += 1
         return records, fetched_ok
+
+    def _get_list(self, sess, url: str) -> engine.Page:
+        """Fetch a list/pagination page and follow any meta-refresh bounce — the
+        `service=page` URL returns a refresh stub pointing at the real
+        session-tokenised list (`service=direct&session=T&...`)."""
+        return self._follow_meta_refresh(sess, self.session_get(sess, url))
+
+    def _follow_meta_refresh(self, sess, page: engine.Page,
+                             max_hops: int = 3) -> engine.Page:
+        seen = {page.url}
+        for _ in range(max_hops):
+            target = self._meta_refresh_target(page)
+            if not target or target in seen:
+                break
+            seen.add(target)
+            self.logger.info("Following meta-refresh → %s", target)
+            page = self.session_get(sess, target)
+        return page
+
+    @staticmethod
+    def _meta_refresh_target(page: engine.Page) -> str | None:
+        """Extract the URL from <meta http-equiv="refresh" content="N;url=...">."""
+        doc = page.select()
+        for m in doc.css("meta"):
+            if (m.attrib.get("http-equiv") or "").lower() != "refresh":
+                continue
+            content = m.attrib.get("content") or ""
+            hit = re.search(r"url\s*=\s*['\"]?([^'\"]+)", content, re.I)
+            if hit:
+                return urljoin(page.url, hit.group(1).strip())
+        return None
 
     def _find_list_link(self, page: engine.Page) -> str | None:
         """Find the 'Latest Active Tenders' anchor — its href carries the

@@ -135,6 +135,16 @@ def _diagnose(scraper, portal) -> None:
                 if list_page is None:
                     print(f"  falling back to direct list URL: {scraper.list_url(1)}")
                     list_page = scraper.session_get(sess, scraper.list_url(1))
+                # Follow + report the meta-refresh chain (the GePNIC bounce)
+                seen = {list_page.url}
+                for hop in range(4):
+                    target = scraper._meta_refresh_target(list_page)
+                    if not target or target in seen:
+                        break
+                    seen.add(target)
+                    print(f"  ↪ meta-refresh → {target[:110]}")
+                    list_page = scraper.session_get(sess, target)
+                    _page_summary(f"  after refresh #{hop + 1}", list_page)
             page = list_page
         else:
             page = scraper.fetch_http(portal.base_url)
