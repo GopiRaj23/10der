@@ -4,14 +4,26 @@ Reference implementation #1. The same NIC "GePNIC" software powers most
 central/state portals, so the parsing core lives in `NICGenericScraper` and
 is reused by every NIC-based portal (etenders.gov.in, tntenders.gov.in, ...).
 
-Strategy (all free, via Scrapling):
- 1. Impersonated HTTP fetch (Chrome TLS fingerprint) + table parse
- 2. Stealth headless-Chromium render (when the portal's WAF blocks plain HTTP)
+GePNIC is an old Tapestry/JSF app: deep-linking the tender list directly often
+bounces to the portal home page, and the working list URL carries a session
+token. So the scraper browses like a user, all over plain HTTP (free, no
+browser):
+
+ 1. ONE cookie-persistent session: open the portal home, find the real
+    "Latest Active Tenders" link (it embeds the session token), follow it,
+    parse; follow the numbered `linkPage` pagination links in-session.
+ 2. Stealth headless-Chromium render — only if the HTTP flow yields no rows
+    (e.g. the instance renders the list with JavaScript).
 """
 from __future__ import annotations
 
+from urllib.parse import urljoin
+
 from . import engine
 from .base import BaseScraper, ScraperError, TenderRecord
+
+# Anchor texts that lead to the latest-tenders list, tried in order.
+LIST_LINK_TEXTS = ("latest active tenders", "latest tenders")
 
 
 class NICGenericScraper(BaseScraper):
@@ -30,90 +42,151 @@ class NICGenericScraper(BaseScraper):
                    f"&service=direct&session=T&sp=AFrontEndLatestActiveTenders%2Ctable&sp={page}")
         return url
 
+    def home_candidates(self) -> list[str]:
+        """Pages likely to carry the 'Latest Active Tenders' link, tried in order."""
+        base = self.base_url.rstrip("/")
+        return [self.base_url, f"{base}{self.app_path}"]
+
     # --- main entry -----------------------------------------------------------
 
     def scrape(self, search_terms: list[str]) -> list[TenderRecord]:
         records: list[TenderRecord] = []
-        last_error: Exception | None = None
-        for page in range(1, self.max_pages + 1):
-            url = self.list_url(page)
-            try:
-                page_records = self._scrape_page(url)
-            except Exception as exc:  # keep what we have from earlier pages
-                last_error = exc
-                self.logger.warning("Page %s failed: %s", page, exc)
-                break
-            if not page_records:
-                break
-            records.extend(page_records)
-        if not records and last_error:
-            raise ScraperError(str(last_error))
-        return self._filter_by_terms(records, search_terms)
-
-    def home_url(self) -> str:
-        """App landing page — visiting it first establishes a JSESSIONID that
-        the 'Latest Active Tenders' list page needs to render server-side."""
-        return f"{self.base_url.rstrip('/')}{self.app_path}?page=WebTenderStatusLists&service=page"
-
-    def _scrape_page(self, url: str) -> list[TenderRecord]:
-        # 1) Cookie-persistent HTTP: establish a session on the app landing page,
-        #    then request the list — GePNIC renders it server-side once the
-        #    JSESSIONID exists, so this usually avoids needing a browser at all.
-        http_error: Exception | None = None
+        flow_error: Exception | None = None
         fetched_ok = False
         try:
-            page = self.fetch_session([self.base_url, self.home_url()], url)
-            fetched_ok = True
-            records = self._parse_nic_table(page, url)
-            if records:
-                return records
-            self.logger.info("Session HTTP fetch OK (200) but 0 tender rows parsed "
-                             "— trying stealth browser render")
+            records, fetched_ok = self._scrape_via_session()
         except ScraperError as exc:
-            http_error = exc
-            self.logger.warning("HTTP fetch failed (%s) — trying stealth browser", exc)
+            flow_error = exc
+            self.logger.warning("HTTP session flow failed (%s) — trying stealth "
+                                "browser", exc)
+        if records:
+            return self._filter_by_terms(records, search_terms)
+        if fetched_ok and flow_error is None:
+            self.logger.info("HTTP flow OK (200) but 0 tender rows parsed — "
+                             "trying stealth browser render")
 
-        # 2) Stealth browser render (JS-rendered list / session / WAF wall)
+        # Browser fallback: render the first list page with headless Chromium
+        url = self.list_url(1)
         try:
             rendered = engine.stealth_page(url, wait_selector="table#table",
                                            timeout_ms=60000)
         except engine.StealthUnavailable as exc:
             if fetched_ok:
-                # The page came back fine over HTTP — the list just isn't in the
-                # static HTML. Be explicit so this isn't mistaken for a network
-                # problem: the rows are JS/session-rendered and need the browser.
+                # HTTP worked end-to-end — the rows just weren't in the HTML.
+                # Be explicit so this isn't mistaken for a network problem.
                 raise ScraperError(
-                    "fetched the list page over HTTP (200) but found no tender "
-                    "rows in the static HTML — this GePNIC instance renders the "
-                    "list with JS/session. Enable the browser to scrape it: "
-                    "INSTALL_BROWSER=true + rebuild (Docker) or `scrapling "
-                    "install` (local)."
+                    "fetched the portal over HTTP (200) and followed its "
+                    "'Latest Active Tenders' link, but no tender rows were in "
+                    "the HTML — this instance appears to render the list with "
+                    "JavaScript. Enable the browser: INSTALL_BROWSER=true + "
+                    "rebuild (Docker) or `scrapling install` (local). Run "
+                    "test_live --dump for a per-table breakdown."
                 ) from exc
-            raise ScraperError(str(http_error or exc)) from exc
+            raise ScraperError(str(flow_error or exc)) from exc
         except engine.EngineError as exc:
-            raise ScraperError(str(http_error or exc)) from exc
-        return self._parse_nic_table(rendered, url)
+            raise ScraperError(str(flow_error or exc)) from exc
+        records = self._parse_nic_table(rendered, url)
+        if not records:
+            raise ScraperError(
+                "browser-rendered the list page but still found no tender rows "
+                "— the portal markup may have changed (run test_live --dump)"
+            )
+        return self._filter_by_terms(records, search_terms)
+
+    # --- HTTP session flow ------------------------------------------------------
+
+    def _scrape_via_session(self) -> tuple[list[TenderRecord], bool]:
+        """Browse home → list link → pagination inside one cookie session.
+        Returns (records, fetched_ok) where fetched_ok means at least one page
+        came back HTTP 200 (i.e. network + impersonation are fine)."""
+        records: list[TenderRecord] = []
+        fetched_ok = False
+        with self.http_session() as sess:
+            list_page: engine.Page | None = None
+            for home in self.home_candidates():
+                try:
+                    home_page = self.session_get(sess, home)
+                    fetched_ok = True
+                except ScraperError as exc:
+                    self.logger.debug("home candidate %s failed: %s", home, exc)
+                    continue
+                link = self._find_list_link(home_page)
+                if link:
+                    self.logger.info("Following list link found on %s", home)
+                    list_page = self.session_get(sess, link)
+                    break
+            if list_page is None:
+                # No link found — request the canonical list URL in-session
+                # (the session cookie alone is enough on some instances).
+                list_page = self.session_get(sess, self.list_url(1))
+                fetched_ok = True
+
+            page_records = self._parse_nic_table(list_page, list_page.url)
+            records.extend(page_records)
+            pages = 1
+            current = list_page
+            while page_records and pages < self.max_pages:
+                next_url = self._next_page_url(current, pages + 1)
+                if not next_url:
+                    break
+                current = self.session_get(sess, next_url)
+                page_records = self._parse_nic_table(current, current.url)
+                records.extend(page_records)
+                pages += 1
+        return records, fetched_ok
+
+    def _find_list_link(self, page: engine.Page) -> str | None:
+        """Find the 'Latest Active Tenders' anchor — its href carries the
+        Tapestry session token the list page needs."""
+        doc = page.select()
+        for wanted in LIST_LINK_TEXTS:
+            for a in doc.css("a"):
+                href = a.attrib.get("href")
+                if not href or href.lower().startswith(("javascript:", "#", "mailto:")):
+                    continue
+                text = " ".join(a.get_all_text(" ", strip=True).split()).lower()
+                if wanted in text:
+                    return urljoin(page.url, href)
+        return None
+
+    def _next_page_url(self, page: engine.Page, next_no: int) -> str | None:
+        """GePNIC pagination: numbered anchors whose href targets linkPage."""
+        doc = page.select()
+        for a in doc.css("a"):
+            href = a.attrib.get("href")
+            if not href or "linkpage" not in href.lower():
+                continue
+            if a.get_all_text(strip=True).strip() == str(next_no):
+                return urljoin(page.url, href)
+        return None
 
     # --- parsing ---------------------------------------------------------------
 
     def _parse_nic_table(self, page: engine.Page, page_url: str) -> list[TenderRecord]:
-        """Parse the GePNIC 'Latest Active Tenders' list table.
+        """Parse the GePNIC 'Latest Active Tenders' list.
 
         Columns: S.No | e-Published Date | Closing Date | Opening Date |
                  Title and Ref.No./Tender ID | Organisation Chain
+
+        The canonical table (#table / .list_table) is tried first; if it's
+        missing or empty, every table on the page is scanned and the one
+        yielding the most tender-shaped rows wins (GePNIC instances vary
+        their markup).
         """
         doc = page.select()
-        table = doc.css("table#table").first or doc.css("table.list_table").first
-        if table is None:
-            # Some instances render the list inside nested tables
-            for cand in doc.css("table"):
-                head = " ".join(cand.get_all_text(" ", strip=True).split())[:300].lower()
-                if "e-published" in head and "closing" in head:
-                    table = cand
-                    break
-        if table is None:
-            return []
+        preferred = doc.css("table#table").first or doc.css("table.list_table").first
+        if preferred is not None:
+            records = self._parse_rows(preferred, page_url)
+            if records:
+                return records
+        best: list[TenderRecord] = []
+        for table in doc.css("table"):
+            records = self._parse_rows(table, page_url)
+            if len(records) > len(best):
+                best = records
+        return best
 
+    def _parse_rows(self, table, page_url: str) -> list[TenderRecord]:
         records: list[TenderRecord] = []
         for row in table.css("tr"):
             cells = row.css("td")
@@ -123,6 +196,10 @@ class NICGenericScraper(BaseScraper):
             texts = [" ".join(c.get_all_text(" ", strip=True).split()) for c in cells]
             if not texts[0].rstrip(".").isdigit():
                 continue  # header / pagination rows
+            published = self.parse_date(texts[1])
+            closing = self.parse_dt(texts[2])
+            if published is None and closing is None:
+                continue  # 6-cell row that isn't a tender row
             title_cell = cells[4]
             link = title_cell.css("a").first
             title_text = texts[4]
@@ -134,14 +211,14 @@ class NICGenericScraper(BaseScraper):
                 refs = [p.strip("[] ") for p in title_text.split("[")[1:]]
                 ref_no = refs[-1] if refs else title_text
             href = link.attrib.get("href") if link is not None else None
-            if href and href.startswith("/"):
-                href = f"{self.base_url.rstrip('/')}{href}"
+            if href:
+                href = urljoin(page_url, href)
             records.append(TenderRecord(
                 tender_ref_no=(ref_no or title)[:160],
                 title=title or title_text,
                 organisation=texts[5][:300] or None,
-                published_date=self.parse_date(texts[1]),
-                closing_date=self.parse_dt(texts[2]),
+                published_date=published,
+                closing_date=closing,
                 document_url=href or page_url,
                 raw_url=page_url,
                 state=getattr(self.portal, "state", None),

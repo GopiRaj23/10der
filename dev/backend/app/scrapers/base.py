@@ -134,14 +134,21 @@ class BaseScraper(ABC):
         except engine.EngineError as exc:
             raise ScraperError(str(exc)) from exc
 
-    def fetch_session(self, warmup_urls: list[str], target_url: str) -> engine.Page:
-        """Cookie-persistent fetch: visit ``warmup_urls`` to establish a session,
-        then fetch ``target_url`` reusing the cookies (for JSF/GePNIC portals)."""
-        self._pre_fetch(target_url)
+    def http_session(self):
+        """Cookie-persistent session (context manager) for portals that need a
+        real navigation flow (JSF/GePNIC session tokens)."""
+        return engine.open_session()
+
+    def session_get(self, sess, url: str) -> engine.Page:
+        """GET inside an open session, with robots + politeness delay applied."""
+        self._pre_fetch(url)
         try:
-            return engine.session_page(warmup_urls, target_url)
-        except engine.EngineError as exc:
-            raise ScraperError(str(exc)) from exc
+            resp = sess.get(url)
+        except Exception as exc:  # noqa: BLE001 — curl/session errors vary
+            raise ScraperError(f"session fetch failed for {url}: {exc}") from exc
+        if resp.status >= 400:
+            raise ScraperError(f"HTTP {resp.status} for {url}")
+        return engine.Page(url=url, status=resp.status, html=resp.html_content)
 
     # --- parsing helpers ----------------------------------------------------
 

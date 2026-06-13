@@ -12,9 +12,11 @@ Usage:
 
 What it prints: how the scraper was resolved (real vs stub), whether the
 stealth browser is installed, the number of tenders found, and sample titles.
-With --dump (or when 0 rows are parsed) it also fetches the raw list page and
-reports what came back, so a portal that returns a session/JS shell instead of
-the tender table can be diagnosed.
+With --dump (or when 0 rows are parsed) it replays the scraper's HTTP flow
+step by step — home page, whether the 'Latest Active Tenders' link was found,
+the followed page — then a per-table breakdown showing which table (if any)
+contains tender-shaped rows, so "parser needs fixing" vs "data is JS-rendered,
+browser needed" can be told apart conclusively.
 """
 from __future__ import annotations
 
@@ -30,62 +32,123 @@ from ..models import PortalSource
 from .registry import SCRAPERS
 from .stubs import _StubScraper
 
-# Markers that tell us WHAT the portal returned when the table won't parse.
-_MARKERS = {
-    "tender list heading": ("latest active tenders", "tenders by closing date",
-                            "search active tenders"),
-    "table column headers": ("e-published", "closing date", "tender id",
-                             "organisation chain"),
-    "empty result": ("no records found", "no tenders", "0 records"),
-    "session/redirect": ("session expired", "invalid request", "session has",
-                         "page has expired"),
-    "captcha/anti-bot": ("captcha", "are you human", "verify you are",
-                         "cloudflare", "checking your browser"),
-    "JS shell": ("please enable javascript", "noscript", "window.location"),
-}
+def _table_report(doc) -> None:
+    """Per-table breakdown: which (if any) table holds tender-shaped rows —
+    rows with ≥5 cells of which ≥2 parse as dates. This is the decisive
+    signal: 'tender-like rows in table N' means the parser needs adjusting;
+    'no tender-like rows anywhere' means the data isn't in the HTML at all
+    (JS-rendered → browser needed)."""
+    from .base import BaseScraper
+
+    tables = doc.css("table")
+    print(f"  per-table breakdown ({len(tables)} tables):")
+    any_tenderlike = False
+    for i, t in enumerate(tables[:30]):
+        rows = t.css("tr")
+        max_td, date_rows, sample = 0, 0, None
+        for r in rows:
+            tds = [" ".join(c.get_all_text(" ", strip=True).split()) for c in r.css("td")]
+            max_td = max(max_td, len(tds))
+            if len(tds) >= 5:
+                dateish = sum(1 for c in tds if c and BaseScraper.parse_dt(c))
+                if dateish >= 2:
+                    date_rows += 1
+                    if sample is None:
+                        sample = tds
+        flag = "   ← tender-like rows" if date_rows else ""
+        if date_rows or len(rows) > 2:   # skip layout noise
+            tid = t.attrib.get("id") or t.attrib.get("class") or "-"
+            print(f"    table[{i:>2}] id/class={str(tid)[:18]:<18} rows={len(rows):<4} "
+                  f"max_td={max_td:<3} tender_rows={date_rows}{flag}")
+        if sample and not any_tenderlike:
+            any_tenderlike = True
+            print(f"      sample row: {' | '.join(c[:30] for c in sample[:7])}")
+    if not any_tenderlike:
+        print("    → NO tender-shaped rows in any table: the list is NOT in this "
+              "HTML (JS-rendered or wrong page).")
 
 
-def _diagnose(scraper, portal) -> None:
-    """Fetch the raw list page (the same way the scraper does) and report what
-    actually came back."""
-    nic = hasattr(scraper, "home_url") and hasattr(scraper, "list_url")
-    url = scraper.list_url(1) if nic else portal.base_url
-    print(f"\n  ── HTML diagnosis ── {url}")
-    try:
-        if nic:
-            page = scraper.fetch_session([scraper.base_url, scraper.home_url()], url)
-        else:
-            page = scraper.fetch_http(url)
-    except Exception as exc:  # noqa: BLE001
-        print(f"  could not fetch for diagnosis: {exc}")
-        return
-    html = page.html or ""
-    doc = page.select()
-    title = doc.css("title").first
-    title = title.get_all_text(strip=True) if title is not None else "—"
-    n_tables = len(doc.css("table"))
-    n_rows = len(doc.css("tr"))
+def _shell_report(html: str, doc) -> None:
+    """Detect redirect mechanisms that would explain a bounced page."""
     low = html.lower()
-    print(f"  HTTP {page.status} | {len(html):,} bytes | <title>: {title[:70]}")
-    print(f"  tables: {n_tables} | <tr> rows: {n_rows}")
-    found = [label for label, needles in _MARKERS.items()
-             if any(n in low for n in needles)]
-    print(f"  markers present: {', '.join(found) if found else 'none of the known ones'}")
-    # Save full HTML to the storage volume for sharing / deeper inspection
+    hints = []
+    for f in doc.css("frame, iframe"):
+        src = f.attrib.get("src")
+        if src:
+            hints.append(f"frame/iframe → {src[:80]}")
+    if 'http-equiv="refresh"' in low or "http-equiv='refresh'" in low:
+        hints.append("meta-refresh redirect present")
+    for marker in ("location.replace", "location.href", "window.location"):
+        if marker in low:
+            hints.append(f"JS redirect code present ({marker})")
+            break
+    if "captcha" in low:
+        hints.append("the word 'captcha' appears (may be just the search form)")
+    if hints:
+        print("  page mechanisms: " + "; ".join(hints))
+
+
+def _save_html(portal_code: str, html: str) -> None:
     out_dir = Path(settings.storage_dir) / "debug"
     try:
         out_dir.mkdir(parents=True, exist_ok=True)
-        out_file = out_dir / f"{portal.code}.html"
+        out_file = out_dir / f"{portal_code}.html"
         out_file.write_text(html, encoding="utf-8")
         # In the Docker image the app lives at /app and storage_dir is relative.
         container_path = out_file if out_file.is_absolute() else Path("/app") / out_file
         print(f"  saved full HTML → {out_file}")
-        print(f"  copy it out with:  docker compose cp backend:{container_path} ./{portal.code}.html")
+        print(f"  copy it out with:  docker compose cp backend:{container_path} ./{portal_code}.html")
     except Exception as exc:  # noqa: BLE001
         print(f"  (could not save HTML: {exc})")
-    # A short visible-text preview is usually enough to see the problem
+
+
+def _page_summary(label: str, page) -> None:
+    doc = page.select()
+    title = doc.css("title").first
+    title = title.get_all_text(strip=True) if title is not None else "—"
+    print(f"  {label}: HTTP {page.status} | {len(page.html or ''):,} bytes | "
+          f"<title>: {title[:60]}")
+
+
+def _diagnose(scraper, portal) -> None:
+    """Replay the scraper's own fetch flow step by step and report what each
+    stage actually returned."""
+    print("\n  ── diagnosis (replaying the scraper's HTTP flow) ──")
+    nic = hasattr(scraper, "home_candidates")
+    try:
+        if nic:
+            with scraper.http_session() as sess:
+                list_page = None
+                for home in scraper.home_candidates():
+                    try:
+                        home_page = scraper.session_get(sess, home)
+                    except Exception as exc:  # noqa: BLE001
+                        print(f"  home {home} → failed: {exc}")
+                        continue
+                    _page_summary(f"home {home}", home_page)
+                    link = scraper._find_list_link(home_page)
+                    if link:
+                        print(f"  ✓ 'Latest Active Tenders' link found → {link[:110]}")
+                        list_page = scraper.session_get(sess, link)
+                        break
+                    print("  ✗ no 'Latest Active Tenders' link on this page")
+                if list_page is None:
+                    print(f"  falling back to direct list URL: {scraper.list_url(1)}")
+                    list_page = scraper.session_get(sess, scraper.list_url(1))
+            page = list_page
+        else:
+            page = scraper.fetch_http(portal.base_url)
+    except Exception as exc:  # noqa: BLE001
+        print(f"  could not fetch for diagnosis: {exc}")
+        return
+
+    _page_summary("final page", page)
+    doc = page.select()
+    _shell_report(page.html or "", doc)
+    _table_report(doc)
+    _save_html(portal.code, page.html or "")
     text = " ".join(doc.get_all_text(" ", strip=True).split())
-    print(f"  text preview: {text[:300]}")
+    print(f"  text preview: {text[:240]}")
 
 
 def _print_portals(db) -> None:
