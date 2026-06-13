@@ -25,11 +25,15 @@ RUN if [ "$INSTALL_BROWSER" = "true" ]; then \
     fi
 
 COPY . .
-RUN chmod +x docker-entrypoint.sh
+# Strip CRLF in case the build context was checked out on Windows — a CRLF
+# shebang makes `exec` fail with "no such file or directory".
+RUN sed -i 's/\r$//' docker-entrypoint.sh && chmod +x docker-entrypoint.sh
 
 EXPOSE 8000
 
-HEALTHCHECK --interval=30s --timeout=5s --start-period=20s \
+# Generous start-period: the first run may download the stealth browser into
+# the volume (~1-2 min) before uvicorn starts listening.
+HEALTHCHECK --interval=30s --timeout=5s --start-period=180s \
     CMD curl -fsS http://localhost:8000/health || exit 1
 
 # Entrypoint downloads the browser into the volume on first run, then runs CMD.

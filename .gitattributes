@@ -1,0 +1,4 @@
+# Shell scripts are executed inside Linux containers — they must stay LF even
+# when the repo is checked out on Windows (CRLF turns "#!/bin/sh" into
+# "#!/bin/sh\r" and exec fails with "no such file or directory").
+*.sh text eol=lf

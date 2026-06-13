@@ -1,4 +1,7 @@
 #!/bin/sh
+# NOTE: this file must keep LF line endings (enforced via .gitattributes and a
+# sed pass in the Dockerfile) — a CRLF shebang breaks exec inside the container.
+#
 # Installs the free stealth browser (Chromium) into a MOUNTED VOLUME on first
 # run, then runs the given command. Doing it at runtime (not baking it into the
 # image) keeps the image slim and avoids the large-layer image-extract that can

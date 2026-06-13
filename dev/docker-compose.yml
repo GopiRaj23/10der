@@ -30,6 +30,7 @@ services:
       retries: 10
 
   backend:
+    restart: unless-stopped
     build:
       context: ./backend
       args:
@@ -62,6 +63,7 @@ services:
              uvicorn app.main:app --host 0.0.0.0 --port 8000"
 
   scheduler:
+    restart: unless-stopped
     build:
       context: ./backend
       args:
@@ -81,9 +83,13 @@ services:
     command: python -m app.scheduler
 
   frontend:
+    restart: unless-stopped
     build: ./frontend
 
   nginx:
+    # restart covers the startup race: if nginx comes up before the backend's
+    # DNS name resolves, it exits once and recovers on the next start.
+    restart: unless-stopped
     image: nginx:1.27-alpine
     ports:
       - "80:80"
